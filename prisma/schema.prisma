@@ -1,0 +1,307 @@
+// ──────────────────────────────────────────────────────────────
+// RMS2 — Prisma Schema  |  PostgreSQL
+// ──────────────────────────────────────────────────────────────
+// Key Design Decisions:
+//   • Promotions are NON-DESTRUCTIVE  — basePrice is never overwritten.
+//   • OrderItem stores a `frozenPrice` snapshot for historical accuracy.
+//   • Payment is "Record-Only" — no gateway processing.
+//   • Table tracks a nullable `currentOrderId` for quick POS look-ups.
+// ──────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────
+
+enum Role {
+  OWNER
+  SUPERVISOR
+  FLOOR_STAFF
+  KITCHEN_STAFF
+}
+
+enum TableStatus {
+  VACANT
+  OCCUPIED
+  BILL_PRINTED
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum OrderStatus {
+  OPEN
+  PAID
+  VOID
+  REFUNDED     // Fully refunded order
+}
+
+enum OrderItemStatus {
+  PENDING
+  READY
+  SERVED   // Delivered to table by floor staff
+  VOIDED   // Item cancelled after being fired
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEOUT
+  QUICK_SALE
+}
+
+enum PaymentMethod {
+  CASH
+  CARD_EXTERNAL
+  LATER_PAY    // Phone/takeout orders — payment collected on handover
+}
+
+enum PromotionType {
+  FIXED    // Flat discount (e.g. $2 off)
+  PERCENT  // Percentage discount (e.g. 15% off)
+  COMBO    // Buy X, Get Y for Fixed Price
+}
+
+enum PromotionScope {
+  ITEM     // Targets a specific MenuItem
+  CATEGORY // Targets every item in a Category
+}
+
+// ─── User ────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  role      Role
+  pinCode   String   @unique          // 4-6 digit staff PIN (hashed)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders         Order[]        // Orders created by this user
+  refundedOrders Order[]        @relation("RefundedBy")
+  reservations   Reservation[]  // Reservations created by this user
+}
+
+// ─── Table ───────────────────────────────────────────────────
+
+model Table {
+  id             String      @id @default(cuid())
+  name           String      @unique           // e.g. "T1", "Bar-3"
+  seats          Int         @default(4)
+  status         TableStatus @default(VACANT)
+  currentOrderId String?     @unique           // FK to the active Order
+
+  currentOrder   Order?        @relation("ActiveTableOrder", fields: [currentOrderId], references: [id])
+  orders         Order[]       @relation("TableOrders")
+  reservations   Reservation[] // Multiple non-overlapping reservations
+
+  // Merge
+  mergedIntoId   String?
+  mergedInto     Table?      @relation("TableMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom     Table[]     @relation("TableMerge")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Reservation ─────────────────────────────────────────────
+
+model Reservation {
+  id            String            @id @default(cuid())
+  guestName     String
+  reservedAt    DateTime          // Start time
+  reservedUntil DateTime          // End time
+  status        ReservationStatus @default(ACTIVE)
+
+  tableId       String
+  table         Table  @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  createdById   String
+  createdBy     User   @relation(fields: [createdById], references: [id])
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tableId])
+  @@index([reservedAt])
+}
+
+// ─── Category & MenuItem ─────────────────────────────────────
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String     @unique       // e.g. "Appetizers", "Mains"
+  sortOrder Int        @default(0)
+  items     MenuItem[]
+  promotions Promotion[]
+  promotionRules PromotionRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  basePrice   Float                       // NEVER overwritten by promotions
+  isAvailable Boolean  @default(true)     // Toggle for 86-ing items
+  imageUrl    String?
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  orderItems  OrderItem[]
+  promotions  Promotion[]
+  promotionRules PromotionRule[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+}
+
+// ─── Promotion (Non-Destructive) ─────────────────────────────
+
+model Promotion {
+  id     String        @id @default(cuid())
+  name   String                          // e.g. "Happy Hour 15%"
+  type   PromotionType                   // FIXED or PERCENT
+  value  Float                           // The discount amount or %
+  scope  PromotionScope                  // ITEM or CATEGORY
+  active Boolean       @default(true)
+
+  // Nullable FKs — exactly one should be set depending on `scope`
+  menuItemId String?
+  menuItem   MenuItem?  @relation(fields: [menuItemId], references: [id])
+
+  categoryId String?
+  category   Category?  @relation(fields: [categoryId], references: [id])
+
+  rules      PromotionRule[]
+
+  startsAt  DateTime?
+  endsAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+  @@index([menuItemId])
+  @@index([categoryId])
+}
+
+model PromotionRule {
+  id          String   @id @default(cuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  // Trigger Condition (Buy X)
+  requiredQuantity Int     @default(1)
+  menuItemId       String?
+  menuItem         MenuItem? @relation(fields: [menuItemId], references: [id])
+  categoryId       String?
+  category         Category? @relation(fields: [categoryId], references: [id])
+
+  // Combo Logic
+  isDiscounted Boolean @default(false) // If true, this rule defines the "Get Y" part
+  name         String?                 // e.g. "Main Dish", "Side + Drink"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([promotionId])
+}
+
+// ─── Order ───────────────────────────────────────────────────
+
+model Order {
+  id            String        @id @default(cuid())
+  orderNumber   Int           @default(autoincrement()) // Human-friendly #
+  status        OrderStatus   @default(OPEN)
+  orderType     OrderType     @default(DINE_IN)
+  paymentMethod PaymentMethod?
+
+  // Takeout customer info
+  customerName  String?
+  customerPhone String?
+
+  // Scheduling (null = ASAP)
+  scheduledAt   DateTime?
+
+  // Relations
+  tableId   String?
+  table     Table?  @relation("TableOrders", fields: [tableId], references: [id])
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  items     OrderItem[]
+  activeAt  Table?      @relation("ActiveTableOrder")  // Inverse of Table.currentOrder
+
+  subtotal  Float       @default(0)   // Sum of (frozenPrice * qty)
+  discount  Float       @default(0)   // Total promotion discount applied
+  tax       Float       @default(0)   // 7% Tax
+  total     Float       @default(0)   // subtotal - discount + tax
+
+  // Refund tracking
+  refundAmount  Float?
+  refundReason  String?            // Predefined reason code
+  refundNotes   String?            // Additional notes
+  refundedById  String?
+  refundedBy    User?    @relation("RefundedBy", fields: [refundedById], references: [id])
+  refundedAt    DateTime?
+
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([tableId])
+}
+
+// ─── OrderItem ───────────────────────────────────────────────
+
+model OrderItem {
+  id          String          @id @default(cuid())
+  quantity    Int             @default(1)
+  frozenPrice Float                           // Snapshot of price at time of sale
+  notes       String?                         // e.g. "No onions"
+  status      OrderItemStatus @default(PENDING)
+  voidReason  String?                         // e.g. "Customer changed mind", "Spilled"
+
+  // Partial refund tracking
+  refunded    Boolean @default(false)
+
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+}
+
+// ─── Site Settings ───────────────────────────────────────────
+
+model SiteSettings {
+  id        String   @id @default(cuid())
+  key       String   @unique          // e.g. "KDS_PREP_BUFFER_MINUTES"
+  value     String                    // e.g. "30"
+  updatedAt DateTime @updatedAt
+}
+
