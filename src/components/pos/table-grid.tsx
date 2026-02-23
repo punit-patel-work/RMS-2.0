@@ -1,21 +1,21 @@
-'use client';
+"use client";
 
-import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Users,
   Link2,
@@ -26,17 +26,16 @@ import {
   AlertTriangle,
   LayoutDashboard,
   List,
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { formatCurrency } from '@/lib/pricing';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/pricing";
 import {
   reserveTable,
   cancelReservation,
   mergeTables,
   demergeTables,
-} from '@/server/actions/table.actions';
-import { toast } from 'sonner';
+} from "@/server/actions/table.actions";
+import { toast } from "sonner";
 
 interface ReservationData {
   id: string;
@@ -49,7 +48,7 @@ interface TableData {
   id: string;
   name: string;
   seats: number;
-  status: 'VACANT' | 'OCCUPIED' | 'BILL_PRINTED';
+  status: "VACANT" | "OCCUPIED" | "BILL_PRINTED";
   mergedIntoId?: string | null;
   positionX: number;
   positionY: number;
@@ -65,31 +64,34 @@ interface TableData {
     paymentMethod: string | null;
     items: {
       id: string;
-      status: 'PENDING' | 'READY' | 'SERVED' | 'VOIDED';
+      status: "PENDING" | "READY" | "SERVED" | "VOIDED";
     }[];
   } | null;
 }
 
-const statusConfig: Record<string, { bg: string; dot: string; text: string }> = {
-  VACANT: {
-    bg: 'bg-emerald-500/10 border-emerald-500/50 hover:bg-emerald-500/20',
-    dot: 'bg-emerald-500',
-    text: 'Vacant',
-  },
-  OCCUPIED: {
-    bg: 'bg-red-500/10 border-red-500/50 hover:bg-red-500/20',
-    dot: 'bg-red-500',
-    text: 'Occupied',
-  },
-  BILL_PRINTED: {
-    bg: 'bg-amber-500/10 border-amber-500/50 hover:bg-amber-500/20',
-    dot: 'bg-amber-500',
-    text: 'Bill Printed',
-  },
-};
+const statusConfig: Record<string, { bg: string; dot: string; text: string }> =
+  {
+    VACANT: {
+      bg: "bg-emerald-500/10 border-emerald-500/50 hover:bg-emerald-500/20",
+      dot: "bg-emerald-500",
+      text: "Vacant",
+    },
+    OCCUPIED: {
+      bg: "bg-red-500/10 border-red-500/50 hover:bg-red-500/20",
+      dot: "bg-red-500",
+      text: "Occupied",
+    },
+    BILL_PRINTED: {
+      bg: "bg-amber-500/10 border-amber-500/50 hover:bg-amber-500/20",
+      dot: "bg-amber-500",
+      text: "Bill Printed",
+    },
+  };
 
 // Find the next upcoming reservation that's within 30 minutes
-function getUpcomingWarning(reservations: ReservationData[] | undefined): ReservationData | null {
+function getUpcomingWarning(
+  reservations: ReservationData[] | undefined,
+): ReservationData | null {
   if (!reservations?.length) return null;
   const now = Date.now();
   const thirtyMins = 30 * 60 * 1000;
@@ -109,35 +111,42 @@ function getUpcomingWarning(reservations: ReservationData[] | undefined): Reserv
 export function TableGrid({ tables }: { tables: TableData[] }) {
   const router = useRouter();
   const { data: session } = useSession();
-  const userId = (session?.user as any)?.id ?? '';
+  const userId = (session?.user as any)?.id ?? "";
   const [isPending, startTransition] = useTransition();
 
   // Reserve dialog
   const [reserveId, setReserveId] = useState<string | null>(null);
-  const [guestName, setGuestName] = useState('');
-  const [reserveDate, setReserveDate] = useState('');
-  const [reserveStart, setReserveStart] = useState('');
-  const [reserveEnd, setReserveEnd] = useState('');
+  const [guestName, setGuestName] = useState("");
+  const [reserveDate, setReserveDate] = useState("");
+  const [reserveStart, setReserveStart] = useState("");
+  const [reserveEnd, setReserveEnd] = useState("");
 
   // Merge dialog
   const [mergeParentId, setMergeParentId] = useState<string | null>(null);
   const [mergeChildIds, setMergeChildIds] = useState<string[]>([]);
 
   // Reservations list dialog
-  const [viewReservationsTable, setViewReservationsTable] = useState<TableData | null>(null);
+  const [viewReservationsTable, setViewReservationsTable] =
+    useState<TableData | null>(null);
 
   // Filter out tables that are merged into another
   const visibleTables = tables.filter((t) => !t.mergedIntoId);
 
   const handleReserve = () => {
-    if (!reserveId || !guestName.trim() || !reserveDate || !reserveStart || !reserveEnd) {
-      toast.error('Fill in all reservation fields');
+    if (
+      !reserveId ||
+      !guestName.trim() ||
+      !reserveDate ||
+      !reserveStart ||
+      !reserveEnd
+    ) {
+      toast.error("Fill in all reservation fields");
       return;
     }
     const startDt = new Date(`${reserveDate}T${reserveStart}`);
     const endDt = new Date(`${reserveDate}T${reserveEnd}`);
     if (endDt <= startDt) {
-      toast.error('End time must be after start time');
+      toast.error("End time must be after start time");
       return;
     }
     startTransition(async () => {
@@ -149,7 +158,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
         reservedUntil: endDt,
       });
       if (result.success) {
-        toast.success('Table reserved');
+        toast.success("Table reserved");
         setReserveId(null);
         router.refresh();
       } else {
@@ -162,7 +171,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
     startTransition(async () => {
       const result = await cancelReservation(reservationId);
       if (result.success) {
-        toast.success('Reservation cancelled');
+        toast.success("Reservation cancelled");
         setViewReservationsTable(null);
         router.refresh();
       } else {
@@ -173,13 +182,13 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
 
   const handleMerge = () => {
     if (!mergeParentId || mergeChildIds.length === 0) {
-      toast.error('Select at least one table to merge');
+      toast.error("Select at least one table to merge");
       return;
     }
     startTransition(async () => {
       const result = await mergeTables(mergeParentId, mergeChildIds);
       if (result.success) {
-        toast.success('Tables merged');
+        toast.success("Tables merged");
         setMergeParentId(null);
         setMergeChildIds([]);
         router.refresh();
@@ -193,7 +202,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
     startTransition(async () => {
       const result = await demergeTables(parentId);
       if (result.success) {
-        toast.success('Tables separated');
+        toast.success("Tables separated");
         router.refresh();
       } else {
         toast.error(result.error);
@@ -203,75 +212,11 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
 
   return (
     <>
-      <Tabs defaultValue="floorplan" className="w-full">
-        <div className="flex justify-between items-center mb-4">
-          <TabsList>
-            <TabsTrigger value="floorplan" className="gap-2">
-              <LayoutDashboard className="w-4 h-4" />
-              Floor Plan
-            </TabsTrigger>
-            <TabsTrigger value="list" className="gap-2">
-              <List className="w-4 h-4" />
-              Grid View
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="floorplan" className="mt-0">
-          <div 
-            className="relative w-full h-[600px] bg-card border-none rounded-lg overflow-hidden touch-none overflow-x-auto shadow-sm"
-          >
-            {visibleTables.map((table, index) => {
-              const isUnpositioned = table.positionX === 0 && table.positionY === 0;
-              const px = isUnpositioned ? (index % 5) * 120 + 20 : table.positionX;
-              const py = isUnpositioned ? Math.floor(index / 5) * 120 + 20 : table.positionY;
-
-              const bgClass =
-                table.status === 'OCCUPIED' ? 'border-red-500 bg-red-50 text-red-900 shadow-md ring-1 ring-red-400' :
-                table.status === 'BILL_PRINTED' ? 'border-yellow-500 bg-yellow-50 text-yellow-900 shadow-md ring-1 ring-yellow-400' :
-                'border-emerald-500 text-emerald-950 dark:text-emerald-50 hover:bg-emerald-50 hover:shadow-md transition-all cursor-pointer ring-1 ring-emerald-400 shadow-sm';
-              
-              const upcomingWarning = getUpcomingWarning(table.reservations);
-
-              return (
-                <div
-                  key={table.id}
-                  onClick={() => router.push(`/pos/${table.id}`)}
-                  className={cn(
-                    "absolute flex flex-col items-center justify-center p-2 border-2 transition-transform active:scale-95 cursor-pointer backdrop-blur-sm",
-                    table.shape === 'ROUND' ? 'rounded-full' : 'rounded-md',
-                    bgClass,
-                    upcomingWarning && 'ring-2 ring-amber-400 ring-offset-2 animate-pulse'
-                  )}
-                  style={{
-                    left: `${px}px`,
-                    top: `${py}px`,
-                    width: `${table.width}px`,
-                    height: `${table.height}px`,
-                  }}
-                >
-                  <span className="font-bold text-lg pointer-events-none drop-shadow-sm">{table.name}</span>
-                  {table.currentOrder && (
-                     <span className="text-xs font-semibold mt-1">
-                       {formatCurrency(table.currentOrder.total)}
-                     </span>
-                  )}
-                  {table.mergedFrom && table.mergedFrom.length > 0 && (
-                    <Badge variant="secondary" className="absolute -bottom-2 text-[9px] pointer-events-none">
-                      +{table.mergedFrom.length}
-                    </Badge>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="list" className="mt-0">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 md:gap-4">
-            {visibleTables.map((table) => {
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 md:gap-4">
+        {visibleTables.map((table) => {
           const config = statusConfig[table.status] || statusConfig.VACANT;
-          const hasMergedChildren = table.mergedFrom && table.mergedFrom.length > 0;
+          const hasMergedChildren =
+            table.mergedFrom && table.mergedFrom.length > 0;
           const upcomingWarning = getUpcomingWarning(table.reservations);
           const reservationCount = table.reservations?.length ?? 0;
 
@@ -279,9 +224,9 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
             <Card
               key={table.id}
               className={cn(
-                'cursor-pointer border-2 transition-all duration-200 active:scale-[0.97] relative',
+                "cursor-pointer border-2 transition-all duration-200 active:scale-[0.97] relative",
                 config.bg,
-                upcomingWarning && 'ring-2 ring-amber-400/60'
+                upcomingWarning && "ring-2 ring-amber-400/60",
               )}
               onClick={() => router.push(`/pos/${table.id}`)}
             >
@@ -291,13 +236,21 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                   <div className="flex items-center gap-1.5 min-w-0">
                     <h3 className="text-lg font-bold truncate">{table.name}</h3>
                     {hasMergedChildren && (
-                      <Badge variant="outline" className="text-[10px] gap-0.5 shrink-0 px-1">
-                        <Link2 className="w-2.5 h-2.5" />
-                        +{table.mergedFrom!.length}
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] gap-0.5 shrink-0 px-1"
+                      >
+                        <Link2 className="w-2.5 h-2.5" />+
+                        {table.mergedFrom!.length}
                       </Badge>
                     )}
                   </div>
-                  <div className={cn('w-2.5 h-2.5 rounded-full shrink-0', config.dot)} />
+                  <div
+                    className={cn(
+                      "w-2.5 h-2.5 rounded-full shrink-0",
+                      config.dot,
+                    )}
+                  />
                 </div>
 
                 {/* Seats */}
@@ -316,9 +269,19 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                       </p>
                       <p className="text-amber-600 dark:text-amber-500 flex items-center gap-1">
                         <Clock className="w-3 h-3" />
-                        {new Date(upcomingWarning.reservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {' – '}
-                        {new Date(upcomingWarning.reservedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(
+                          upcomingWarning.reservedAt,
+                        ).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                        {" – "}
+                        {new Date(
+                          upcomingWarning.reservedUntil,
+                        ).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </p>
                     </div>
                   </div>
@@ -368,12 +331,12 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                       className="text-[10px] gap-0.5 h-7 px-1.5"
                       onClick={() => {
                         setReserveId(table.id);
-                        setGuestName('');
+                        setGuestName("");
                         const now = new Date();
-                        setReserveDate(now.toISOString().split('T')[0]);
+                        setReserveDate(now.toISOString().split("T")[0]);
                         const h = now.getHours() + 1;
-                        setReserveStart(`${String(h).padStart(2, '0')}:00`);
-                        setReserveEnd(`${String(h + 2).padStart(2, '0')}:00`);
+                        setReserveStart(`${String(h).padStart(2, "0")}:00`);
+                        setReserveEnd(`${String(h + 2).padStart(2, "0")}:00`);
                       }}
                     >
                       <CalendarClock className="w-3 h-3" />
@@ -382,7 +345,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                   )}
 
                   {/* Merge — only VACANT, non-merged */}
-                  {table.status === 'VACANT' && !table.mergedIntoId && (
+                  {table.status === "VACANT" && !table.mergedIntoId && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -406,13 +369,15 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                       onClick={() => setViewReservationsTable(table)}
                     >
                       <CalendarClock className="w-3 h-3" />
-                      <span className="hidden sm:inline">{reservationCount} Res</span>
+                      <span className="hidden sm:inline">
+                        {reservationCount} Res
+                      </span>
                       <span className="sm:hidden">{reservationCount}</span>
                     </Button>
                   )}
 
                   {/* Split merged */}
-                  {hasMergedChildren && table.status !== 'OCCUPIED' && (
+                  {hasMergedChildren && table.status !== "OCCUPIED" && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -429,12 +394,15 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
             </Card>
           );
         })}
-          </div>
-        </TabsContent>
-      </Tabs>
+      </div>
 
       {/* ─── Reserve Dialog ──────────────────────────────── */}
-      <Dialog open={reserveId !== null} onOpenChange={(o) => { if (!o) setReserveId(null); }}>
+      <Dialog
+        open={reserveId !== null}
+        onOpenChange={(o) => {
+          if (!o) setReserveId(null);
+        }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -450,14 +418,25 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
             if (res.length === 0) return null;
             return (
               <div className="bg-muted/50 rounded-lg p-3 space-y-1">
-                <p className="text-xs font-semibold text-muted-foreground">Existing Reservations:</p>
+                <p className="text-xs font-semibold text-muted-foreground">
+                  Existing Reservations:
+                </p>
                 {res.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between text-xs">
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between text-xs"
+                  >
                     <span className="font-medium">{r.guestName}</span>
                     <span className="text-muted-foreground">
-                      {new Date(r.reservedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(r.reservedAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                       –
-                      {new Date(r.reservedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {new Date(r.reservedUntil).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </span>
                   </div>
                 ))}
@@ -480,7 +459,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                 type="date"
                 value={reserveDate}
                 onChange={(e) => setReserveDate(e.target.value)}
-                min={new Date().toISOString().split('T')[0]}
+                min={new Date().toISOString().split("T")[0]}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -507,7 +486,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
               Cancel
             </Button>
             <Button onClick={handleReserve} disabled={isPending}>
-              {isPending ? 'Reserving...' : 'Reserve'}
+              {isPending ? "Reserving..." : "Reserve"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -516,7 +495,9 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
       {/* ─── View Reservations Dialog ────────────────────── */}
       <Dialog
         open={viewReservationsTable !== null}
-        onOpenChange={(o) => { if (!o) setViewReservationsTable(null); }}
+        onOpenChange={(o) => {
+          if (!o) setViewReservationsTable(null);
+        }}
       >
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -530,30 +511,41 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
               const start = new Date(r.reservedAt);
               const end = new Date(r.reservedUntil);
               const now = Date.now();
-              const isUpcoming = start.getTime() - now < 30 * 60 * 1000 && now < end.getTime();
+              const isUpcoming =
+                start.getTime() - now < 30 * 60 * 1000 && now < end.getTime();
 
               return (
                 <div
                   key={r.id}
                   className={cn(
-                    'flex items-center justify-between p-3 rounded-lg border',
+                    "flex items-center justify-between p-3 rounded-lg border",
                     isUpcoming
-                      ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30'
-                      : 'border-border'
+                      ? "border-amber-300 bg-amber-50 dark:bg-amber-950/30"
+                      : "border-border",
                   )}
                 >
                   <div>
                     <p className="font-semibold text-sm flex items-center gap-1.5">
-                      {isUpcoming && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+                      {isUpcoming && (
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                      )}
                       {r.guestName}
                     </p>
                     <p className="text-xs text-muted-foreground flex items-center gap-1">
                       <Clock className="w-3 h-3" />
-                      {start.toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                      {' '}
-                      {start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      {' – '}
-                      {end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {start.toLocaleDateString([], {
+                        month: "short",
+                        day: "numeric",
+                      })}{" "}
+                      {start.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                      {" – "}
+                      {end.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </p>
                   </div>
                   <Button
@@ -578,7 +570,12 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
       </Dialog>
 
       {/* ─── Merge Dialog ────────────────────────────────── */}
-      <Dialog open={mergeParentId !== null} onOpenChange={(o) => { if (!o) setMergeParentId(null); }}>
+      <Dialog
+        open={mergeParentId !== null}
+        onOpenChange={(o) => {
+          if (!o) setMergeParentId(null);
+        }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -587,12 +584,17 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Select vacant tables to merge with{' '}
+            Select vacant tables to merge with{" "}
             <strong>{tables.find((t) => t.id === mergeParentId)?.name}</strong>
           </p>
           <div className="space-y-2 max-h-48 overflow-y-auto">
             {tables
-              .filter((t) => t.id !== mergeParentId && t.status === 'VACANT' && !t.mergedIntoId)
+              .filter(
+                (t) =>
+                  t.id !== mergeParentId &&
+                  t.status === "VACANT" &&
+                  !t.mergedIntoId,
+              )
               .map((t) => (
                 <label
                   key={t.id}
@@ -602,12 +604,16 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                     checked={mergeChildIds.includes(t.id)}
                     onCheckedChange={(checked: boolean) =>
                       setMergeChildIds((prev) =>
-                        checked ? [...prev, t.id] : prev.filter((id) => id !== t.id)
+                        checked
+                          ? [...prev, t.id]
+                          : prev.filter((id) => id !== t.id),
                       )
                     }
                   />
                   <span className="font-medium">{t.name}</span>
-                  <span className="text-xs text-muted-foreground ml-auto">{t.seats} seats</span>
+                  <span className="text-xs text-muted-foreground ml-auto">
+                    {t.seats} seats
+                  </span>
                 </label>
               ))}
           </div>
@@ -615,8 +621,13 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
             <Button variant="outline" onClick={() => setMergeParentId(null)}>
               Cancel
             </Button>
-            <Button onClick={handleMerge} disabled={isPending || mergeChildIds.length === 0}>
-              {isPending ? 'Merging...' : `Merge ${mergeChildIds.length} Table${mergeChildIds.length > 1 ? 's' : ''}`}
+            <Button
+              onClick={handleMerge}
+              disabled={isPending || mergeChildIds.length === 0}
+            >
+              {isPending
+                ? "Merging..."
+                : `Merge ${mergeChildIds.length} Table${mergeChildIds.length > 1 ? "s" : ""}`}
             </Button>
           </DialogFooter>
         </DialogContent>
