@@ -1,0 +1,81 @@
+
+> rms2@0.1.0 build
+> next build
+
+ΓÜá Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\Punit\package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * C:\Users\Punit\Desktop\Programming\RMS2\package-lock.json
+
+Γû▓ Next.js 16.1.6 (Turbopack)
+- Environments: .env
+
+ΓÜá The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+  Creating an optimized production build ...
+
+> Build error occurred
+Error: Turbopack build failed with 2 errors:
+./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx:8:1
+Module not found: Can't resolve '@/components/ui/switch'
+   6 | import { Input } from '@/components/ui/input';
+   7 | import { Label } from '@/components/ui/label';
+>  8 | import { Switch } from '@/components/ui/switch';
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   9 | import { Trash2, Plus, SlidersHorizontal } from 'lucide-react';
+  10 | import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+  11 | import { updateItemModifiers } from '@/server/actions/menu.actions';
+
+Import map: aliased to relative './src/components/ui/switch' inside of [project]/Desktop/Programming/RMS2
+
+
+Import traces:
+  Client Component Browser:
+    ./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx [Client Component Browser]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Client Component Browser]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Server Component]
+    ./Desktop/Programming/RMS2/src/app/(dashboard)/admin/menu/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx [Client Component SSR]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Client Component SSR]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Server Component]
+    ./Desktop/Programming/RMS2/src/app/(dashboard)/admin/menu/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx:7:1
+Module not found: Can't resolve '@/components/ui/switch'
+   5 | import { Input } from '@/components/ui/input';
+   6 | import { Label } from '@/components/ui/label';
+>  7 | import { Switch } from '@/components/ui/switch';
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   8 | import { Trash2, Plus, SlidersHorizontal } from 'lucide-react';
+   9 | import {
+  10 |   Dialog,
+
+Import map: aliased to relative './src/components/ui/switch' inside of [project]/Desktop/Programming/RMS2
+
+
+Import traces:
+  Client Component Browser:
+    ./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx [Client Component Browser]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Client Component Browser]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Server Component]
+    ./Desktop/Programming/RMS2/src/app/(dashboard)/admin/menu/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx [Client Component SSR]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Client Component SSR]
+    ./Desktop/Programming/RMS2/src/components/admin/menu-manager.tsx [Server Component]
+    ./Desktop/Programming/RMS2/src/app/(dashboard)/admin/menu/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+    at <unknown> (./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx:8:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./Desktop/Programming/RMS2/src/components/admin/modifier-manager.tsx:7:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)

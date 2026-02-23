@@ -22,10 +22,16 @@ export async function updateTableStatus(
     }
 }
 
-export async function createTable(name: string, seats: number) {
+export async function createTable(name: string, seats: number, shape: string = 'SQUARE') {
     try {
         await prisma.table.create({
-            data: { name, seats },
+            data: {
+                name,
+                seats,
+                shape,
+                width: shape === 'ROUND' ? 80 : 100,
+                height: shape === 'ROUND' ? 80 : 100,
+            },
         });
 
         revalidatePath('/(dashboard)/admin/tables', 'page');
@@ -33,6 +39,22 @@ export async function createTable(name: string, seats: number) {
     } catch (error) {
         console.error('Failed to create table:', error);
         return { success: false, error: 'Failed to create table' };
+    }
+}
+
+export async function updateTableLayout(tableId: string, data: { positionX?: number, positionY?: number, width?: number, height?: number, shape?: string }) {
+    try {
+        await prisma.table.update({
+            where: { id: tableId },
+            data,
+        });
+
+        revalidatePath('/(dashboard)/admin/tables', 'page');
+        revalidatePath('/(dashboard)/pos', 'page');
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to update table layout:', error);
+        return { success: false, error: 'Failed to update table layout' };
     }
 }
 

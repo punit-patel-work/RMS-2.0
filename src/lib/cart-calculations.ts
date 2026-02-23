@@ -4,12 +4,13 @@ import { calcEffectivePrice } from '@/lib/pricing';
 export interface CartItemInput {
     menuItemId: string;
     quantity: number;
+    modifiersPrice?: number;
 }
 
 export interface CalculatedItem {
     menuItemId: string;
     quantity: number;
-    basePrice: number;
+    basePrice: number; // Includes modifiers
     frozenPrice: number; // Final price after all discounts (single or combo)
     discount: number;    // basePrice - frozenPrice
     appliedPromoId?: string;
@@ -46,16 +47,25 @@ export function calculateCart(
     activePromotions: ExtendedPromotion[]
 ): CalculationResult {
     // 1. Expand cart into individual units for easier processing
-    // e.g. { id: 'burger', qty: 2 } -> ['burger', 'burger']
-    let remainingUnits: string[] = [];
+    // e.g. { id: 'burger', qty: 2 } -> [unit1, unit2]
+    let remainingUnits: { uid: string; itemId: string; basePrice: number; categoryId: string }[] = [];
     const itemMap = new Map<string, ExtendedMenuItem>();
+    let uidCounter = 0;
 
     for (const item of cartItems) {
         const dbItem = menuItems.find((m) => m.id === item.menuItemId);
         if (!dbItem) continue;
         itemMap.set(dbItem.id, dbItem);
+
+        const effectiveBasePrice = Number(dbItem.basePrice) + (item.modifiersPrice || 0);
+
         for (let i = 0; i < item.quantity; i++) {
-            remainingUnits.push(item.menuItemId);
+            remainingUnits.push({
+                uid: `unit_${uidCounter++}`,
+                itemId: item.menuItemId,
+                basePrice: effectiveBasePrice,
+                categoryId: dbItem.categoryId
+            });
         }
     }
 
@@ -70,11 +80,9 @@ export function calculateCart(
     const finalItems: CalculatedItem[] = [];
 
     // Helper to find if a unit matches a rule
-    const matchesRule = (itemId: string, rule: PromotionRule) => {
-        const item = itemMap.get(itemId);
-        if (!item) return false;
-        if (rule.menuItemId && rule.menuItemId === item.id) return true;
-        if (rule.categoryId && rule.categoryId === item.categoryId) return true;
+    const matchesRule = (unit: { itemId: string; categoryId: string }, rule: PromotionRule) => {
+        if (rule.menuItemId && rule.menuItemId === unit.itemId) return true;
+        if (rule.categoryId && rule.categoryId === unit.categoryId) return true;
         return false;
     };
 
@@ -89,7 +97,7 @@ export function calculateCart(
             for (const rule of combo.rules) {
                 let needed = rule.requiredQuantity;
                 for (let i = 0; i < needed; i++) {
-                    const foundIdx = tempRemaining.findIndex((uid) => matchesRule(uid, rule));
+                    const foundIdx = tempRemaining.findIndex((unit) => matchesRule(unit, rule));
                     if (foundIdx === -1) {
                         possible = false;
                         break;
@@ -103,79 +111,75 @@ export function calculateCart(
                 // Combo matched!
                 const unitsToProcess = [...remainingUnits];
 
-                const triggerItems: ExtendedMenuItem[] = [];
-                const rewardItems: ExtendedMenuItem[] = [];
+                const triggerUnits: typeof remainingUnits = [];
+                const rewardUnits: typeof remainingUnits = [];
 
                 // Extract valid items for this combo instance
                 for (const rule of combo.rules) {
                     for (let i = 0; i < rule.requiredQuantity; i++) {
-                        const idx = unitsToProcess.findIndex((uid) => matchesRule(uid, rule));
-                        const itemId = unitsToProcess[idx];
-                        const item = itemMap.get(itemId)!;
+                        const idx = unitsToProcess.findIndex((unit) => matchesRule(unit, rule));
+                        const unit = unitsToProcess[idx];
 
                         if (rule.isDiscounted) {
-                            rewardItems.push(item);
+                            rewardUnits.push(unit);
                         } else {
-                            triggerItems.push(item);
+                            triggerUnits.push(unit);
                         }
 
                         // Remove from availability
                         unitsToProcess.splice(idx, 1);
-                        const globalIdx = remainingUnits.indexOf(itemId);
+                        const globalIdx = remainingUnits.findIndex(u => u.uid === unit.uid);
                         if (globalIdx !== -1) remainingUnits.splice(globalIdx, 1);
                     }
                 }
 
                 // Calculate Prices
-                // Case A: Mixed (Trigger + Reward) -> "Buy X (full), Get Y for $Z"
-                // Case B: All Discounted (or None) -> "Bundle is $Z"
-
-                const hasTrigger = triggerItems.length > 0;
-                const hasReward = rewardItems.length > 0;
+                const hasTrigger = triggerUnits.length > 0;
+                const hasReward = rewardUnits.length > 0;
 
                 if (hasTrigger && hasReward) {
                     // Trigger items stay full price
-                    for (const item of triggerItems) {
+                    for (const unit of triggerUnits) {
                         finalItems.push({
-                            menuItemId: item.id,
+                            menuItemId: unit.itemId,
                             quantity: 1,
-                            basePrice: item.basePrice,
-                            frozenPrice: item.basePrice,
+                            basePrice: unit.basePrice,
+                            frozenPrice: unit.basePrice,
                             discount: 0,
                             appliedPromoId: combo.id,
                         });
                     }
 
                     // Reward items share the combo.value
-                    const rewardBaseTotal = rewardItems.reduce((sum, i) => sum + i.basePrice, 0);
+                    const rewardBaseTotal = rewardUnits.reduce((sum, u) => sum + u.basePrice, 0);
                     const ratio = rewardBaseTotal > 0 ? combo.value / rewardBaseTotal : 0;
 
-                    for (const item of rewardItems) {
-                        const frozenPrice = item.basePrice * ratio;
+                    for (const unit of rewardUnits) {
+                        const frozenPrice = unit.basePrice * ratio;
                         finalItems.push({
-                            menuItemId: item.id,
+                            menuItemId: unit.itemId,
                             quantity: 1,
-                            basePrice: item.basePrice,
+                            basePrice: unit.basePrice,
                             frozenPrice,
-                            discount: item.basePrice - frozenPrice,
+                            discount: unit.basePrice - frozenPrice,
                             appliedPromoId: combo.id,
                         });
                     }
 
                 } else {
-                    // Bundle Strategy (Distribute across all)
-                    const allItems = [...triggerItems, ...rewardItems];
-                    const baseTotal = allItems.reduce((sum, i) => sum + i.basePrice, 0);
+                    // Bundle Strategy
+                    const allUnits = [...triggerUnits, ...rewardUnits];
+                    const baseTotal = allUnits.reduce((sum, u) => sum + u.basePrice, 0);
                     const ratio = baseTotal > 0 ? combo.value / baseTotal : 0;
 
-                    for (const item of allItems) {
-                        const frozenPrice = item.basePrice * ratio;
+                    for (const unit of allUnits) {
+                        const frozenPrice = unit.basePrice * ratio;
                         finalItems.push({
-                            menuItemId: item.id,
+                            menuItemId: unit.itemId,
                             quantity: 1,
-                            basePrice: item.basePrice,
+                            basePrice: unit.basePrice,
                             frozenPrice,
-                            discount: item.basePrice - frozenPrice,
+                            discount: unit.basePrice - frozenPrice,
                             appliedPromoId: combo.id,
                         });
                     }
@@ -188,17 +192,16 @@ export function calculateCart(
     }
 
     // 3. Apply Simple Promos to remaining items
-    for (const itemId of remainingUnits) {
-        const item = itemMap.get(itemId)!;
+    for (const unit of remainingUnits) {
         const { effectivePrice, appliedPromo, discount } = calcEffectivePrice(
-            { id: item.id, basePrice: item.basePrice, categoryId: item.categoryId },
+            { id: unit.itemId, basePrice: unit.basePrice, categoryId: unit.categoryId },
             simplePromos
         );
 
         finalItems.push({
-            menuItemId: item.id,
+            menuItemId: unit.itemId,
             quantity: 1,
-            basePrice: item.basePrice,
+            basePrice: unit.basePrice,
             frozenPrice: effectivePrice,
             discount,
             appliedPromoId: appliedPromo?.id,

@@ -13,16 +13,23 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Trash2, Users } from 'lucide-react';
+import { Plus, Trash2, Users, LayoutDashboard, List } from 'lucide-react';
 import { createTable, deleteTable } from '@/server/actions/table.actions';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { FloorPlanEditor } from './floor-plan-editor';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface Table {
   id: string;
   name: string;
   seats: number;
   status: string;
+  positionX: number;
+  positionY: number;
+  width: number;
+  height: number;
+  shape: string;
 }
 
 export function TableManager({ tables }: { tables: Table[] }) {
@@ -30,11 +37,12 @@ export function TableManager({ tables }: { tables: Table[] }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState('');
   const [seats, setSeats] = useState('4');
+  const [shape, setShape] = useState('SQUARE');
   const router = useRouter();
 
   const handleCreate = () => {
     startTransition(async () => {
-      const result = await createTable(name, parseInt(seats));
+      const result = await createTable(name, parseInt(seats), shape);
       if (result.success) {
         toast.success('Table created');
         setDialogOpen(false);
@@ -61,14 +69,31 @@ export function TableManager({ tables }: { tables: Table[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-2">
-          <Plus className="w-4 h-4" />
-          Add Table
-        </Button>
-      </div>
+      <Tabs defaultValue="floorplan" className="w-full">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+          <TabsList>
+            <TabsTrigger value="floorplan" className="gap-2">
+              <LayoutDashboard className="w-4 h-4" />
+              Floor Plan
+            </TabsTrigger>
+            <TabsTrigger value="list" className="gap-2">
+              <List className="w-4 h-4" />
+              List View
+            </TabsTrigger>
+          </TabsList>
+          
+          <Button size="sm" onClick={() => setDialogOpen(true)} className="gap-2">
+            <Plus className="w-4 h-4" />
+            Add Table
+          </Button>
+        </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <TabsContent value="floorplan" className="mt-0">
+          <FloorPlanEditor initialTables={tables} />
+        </TabsContent>
+
+        <TabsContent value="list" className="mt-0 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         {tables.map((table) => (
           <Card key={table.id}>
             <CardContent className="p-4 text-center space-y-2">
@@ -93,7 +118,9 @@ export function TableManager({ tables }: { tables: Table[] }) {
             </CardContent>
           </Card>
         ))}
-      </div>
+          </div>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
@@ -117,6 +144,18 @@ export function TableManager({ tables }: { tables: Table[] }) {
                 onChange={(e) => setSeats(e.target.value)}
                 placeholder="4"
               />
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Shape</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={shape}
+                onChange={(e) => setShape(e.target.value)}
+              >
+                <option value="SQUARE">Square / Rectangle</option>
+                <option value="ROUND">Round</option>
+              </select>
             </div>
           </div>
           <DialogFooter>

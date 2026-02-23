@@ -1,22 +1,22 @@
-'use client';
+"use client";
 
-import { useState, useTransition, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { useState, useTransition, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog';
+} from "@/components/ui/dialog";
 import {
   ArrowLeft,
   Plus,
@@ -32,13 +32,17 @@ import {
   Phone,
   Search,
   Calendar,
-} from 'lucide-react';
-import { useCartStore } from '@/stores/cart-store';
-import { fireOrder, recordPayment } from '@/server/actions/order.actions';
-import { formatCurrency } from '@/lib/pricing';
-import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
-import type { Promotion, MenuItem, Category } from '@/generated/prisma/client';
+  UserPlus,
+  Gift,
+} from "lucide-react";
+import { useCartStore } from "@/stores/cart-store";
+import { fireOrder, recordPayment } from "@/server/actions/order.actions";
+import { verifyCustomer, registerCustomer } from "@/server/actions/crm.actions";
+import { formatCurrency } from "@/lib/pricing";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import type { Promotion, MenuItem, Category } from "@/generated/prisma/client";
+import { ModifierSelector } from "@/components/pos/modifier-selector";
 
 type CategoryWithItems = Category & {
   items: MenuItem[];
@@ -53,20 +57,28 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
   const router = useRouter();
   const { data: session } = useSession();
   const [isPending, startTransition] = useTransition();
-  const [activeCategory, setActiveCategory] = useState(
-    categories[0]?.id ?? ''
-  );
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD_EXTERNAL' | 'LATER_PAY' | null>(null);
+  const [activeCategory, setActiveCategory] = useState(categories[0]?.id ?? "");
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<
+    "CASH" | "CARD_EXTERNAL" | "LATER_PAY" | null
+  >(null);
+
+  // CRM / Loyalty
+  const [customerData, setCustomerData] = useState<any>(null);
+  const [loyaltyStatus, setLoyaltyStatus] = useState<
+    "idle" | "loading" | "found" | "not_found" | "registering"
+  >("idle");
+  const [usePoints, setUsePoints] = useState(false);
+
   const [notesItemId, setNotesItemId] = useState<string | null>(null);
-  const [notesValue, setNotesValue] = useState('');
-  const [menuSearch, setMenuSearch] = useState('');
-  const [scheduleDate, setScheduleDate] = useState('');
-  const [scheduleTime, setScheduleTime] = useState('');
+  const [notesValue, setNotesValue] = useState("");
+  const [menuSearch, setMenuSearch] = useState("");
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [modifyingItem, setModifyingItem] = useState<any | null>(null);
   const cart = useCartStore();
 
-  // Set promotions on mount
   // Set promotions on mount and reset cart
   useEffect(() => {
     cart.reset();
@@ -74,55 +86,96 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [promotions]);
 
+  const handleSearchCustomer = async () => {
+    if (!customerPhone.trim() || customerPhone.length < 5) return;
+    setLoyaltyStatus("loading");
+    const res = await verifyCustomer(customerPhone.trim());
+    if (res.success && res.customer) {
+      setCustomerData(res.customer);
+      setCustomerName(res.customer.name || "");
+      setLoyaltyStatus("found");
+    } else {
+      setCustomerData(null);
+      setLoyaltyStatus("not_found");
+    }
+  };
+
+  const handleRegisterCustomer = async () => {
+    setLoyaltyStatus("registering");
+    const res = await registerCustomer(
+      customerPhone.trim(),
+      customerName.trim() || undefined,
+    );
+    if (res.success) {
+      setCustomerData(res.customer);
+      setLoyaltyStatus("found");
+      toast.success("Customer registered!");
+    } else {
+      setLoyaltyStatus("not_found");
+      toast.error(res.error);
+    }
+  };
+
+  const maxRedeemablePoints = customerData
+    ? Math.min(customerData.pointsBalance, Math.ceil(cart.total / 0.1))
+    : 0;
+  const pointsToRedeem = usePoints ? maxRedeemablePoints : 0;
+  const displayTotal = Math.max(0, cart.total - pointsToRedeem * 0.1);
+
   // Menu search: cross-category when searching
   const currentItems = menuSearch.trim()
-    ? categories.flatMap((c) => c.items).filter((item) =>
-        item.name.toLowerCase().includes(menuSearch.toLowerCase())
-      )
-    : categories.find((c) => c.id === activeCategory)?.items ?? [];
+    ? categories
+        .flatMap((c) => c.items)
+        .filter((item) =>
+          item.name.toLowerCase().includes(menuSearch.toLowerCase()),
+        )
+    : (categories.find((c) => c.id === activeCategory)?.items ?? []);
 
   const handleFireTakeout = () => {
     if (cart.items.length === 0) {
-      toast.error('Add items before placing order');
+      toast.error("Add items before placing order");
       return;
     }
     if (!customerName.trim()) {
-      toast.error('Please enter customer name');
+      toast.error("Please enter customer name");
       return;
     }
     if (!paymentMethod) {
-      toast.error('Please select a payment method');
+      toast.error("Please select a payment method");
       return;
     }
 
     startTransition(async () => {
       const result = await fireOrder({
-        orderType: 'TAKEOUT',
-        userId: (session?.user as any)?.id ?? '',
+        orderType: "TAKEOUT",
+        userId: (session?.user as any)?.id ?? "",
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
+        customerId: customerData?.id,
+        pointsToRedeem,
         items: cart.items.map((i) => ({
           menuItemId: i.menuItemId,
           quantity: i.quantity,
           notes: i.notes,
         })),
-        scheduledAt: scheduleDate && scheduleTime
-          ? new Date(`${scheduleDate}T${scheduleTime}`)
-          : undefined,
+        scheduledAt:
+          scheduleDate && scheduleTime
+            ? new Date(`${scheduleDate}T${scheduleTime}`)
+            : undefined,
       });
 
       if (result.success) {
         // If LATER_PAY, record deferred payment
-        if (paymentMethod === 'LATER_PAY') {
-          await recordPayment(result.orderId!, 'LATER_PAY');
-          toast.success('Takeout order placed! Payment on pickup 📦');
+        if (paymentMethod === "LATER_PAY") {
+          await recordPayment(result.orderId!, "LATER_PAY");
+          toast.success("Takeout order placed! Payment on pickup 📦");
         } else {
           await recordPayment(result.orderId!, paymentMethod);
-          toast.success('Takeout order placed & paid! 📦');
+          toast.success("Takeout order placed & paid! 📦");
         }
 
         cart.reset();
-        router.push('/pos');
+        router.push("/pos");
         router.refresh();
       } else {
         toast.error(result.error);
@@ -141,7 +194,7 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
             size="icon"
             onClick={() => {
               cart.reset();
-              router.push('/pos');
+              router.push("/pos");
             }}
           >
             <ArrowLeft className="w-5 h-5" />
@@ -179,7 +232,7 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
               {categories.map((cat) => (
                 <Button
                   key={cat.id}
-                  variant={activeCategory === cat.id ? 'default' : 'outline'}
+                  variant={activeCategory === cat.id ? "default" : "outline"}
                   size="sm"
                   onClick={() => setActiveCategory(cat.id)}
                   className="shrink-0"
@@ -198,10 +251,19 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
               <Card
                 key={item.id}
                 className={cn(
-                  'cursor-pointer transition-all duration-150 active:scale-95',
-                  'hover:bg-muted/50 border-border/50'
+                  "cursor-pointer transition-all duration-150 active:scale-95",
+                  "hover:bg-muted/50 border-border/50",
                 )}
-                onClick={() => cart.addItem(item)}
+                onClick={() => {
+                  if (
+                    (item as any).modifierGroups &&
+                    (item as any).modifierGroups.length > 0
+                  ) {
+                    setModifyingItem(item);
+                  } else {
+                    cart.addItem(item);
+                  }
+                }}
               >
                 <CardContent className="p-4 space-y-2">
                   <h3 className="font-semibold text-sm leading-tight">
@@ -233,6 +295,50 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
           <div className="space-y-2">
             <div className="space-y-1">
               <Label className="text-xs flex items-center gap-1">
+                <Phone className="w-3 h-3" /> Phone Number (Loyalty)
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="(555) 123-4567"
+                  value={customerPhone}
+                  onChange={(e) => {
+                    setCustomerPhone(e.target.value);
+                    setLoyaltyStatus("idle");
+                    setCustomerData(null);
+                    setUsePoints(false);
+                  }}
+                />
+                <Button
+                  onClick={handleSearchCustomer}
+                  variant="outline"
+                  disabled={
+                    loyaltyStatus === "loading" || !customerPhone.trim()
+                  }
+                >
+                  {loyaltyStatus === "loading" ? (
+                    "..."
+                  ) : (
+                    <Search className="w-4 h-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+            {(loyaltyStatus === "not_found" ||
+              loyaltyStatus === "registering") && (
+              <Button
+                onClick={handleRegisterCustomer}
+                variant="secondary"
+                size="sm"
+                className="w-full text-xs h-7"
+                disabled={loyaltyStatus === "registering"}
+              >
+                {loyaltyStatus === "registering"
+                  ? "Registering..."
+                  : "Create Loyalty Profile"}
+              </Button>
+            )}
+            <div className="space-y-1">
+              <Label className="text-xs flex items-center gap-1">
                 <User className="w-3 h-3" /> Customer Name *
               </Label>
               <Input
@@ -241,16 +347,29 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
                 onChange={(e) => setCustomerName(e.target.value)}
               />
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs flex items-center gap-1">
-                <Phone className="w-3 h-3" /> Phone Number
-              </Label>
-              <Input
-                placeholder="(555) 123-4567"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
-              />
-            </div>
+            {customerData && (
+              <div className="bg-blue-50 border border-blue-100 p-2 rounded-md mt-2 flex justify-between items-center text-sm">
+                <div className="flex items-center gap-2 text-blue-800">
+                  <Gift className="w-4 h-4 text-blue-600" />
+                  <strong>{customerData.pointsBalance} pts</strong>
+                </div>
+                {customerData.pointsBalance > 0 && maxRedeemablePoints > 0 && (
+                  <Button
+                    size="sm"
+                    variant={usePoints ? "default" : "outline"}
+                    className={cn(
+                      "h-7 px-2 text-xs",
+                      usePoints
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
+                        : "border-blue-300 text-blue-700 bg-transparent hover:bg-blue-100",
+                    )}
+                    onClick={() => setUsePoints(!usePoints)}
+                  >
+                    {usePoints ? "Applied" : "Redeem"}
+                  </Button>
+                )}
+              </div>
+            )}
             {/* Scheduled Pickup */}
             <div className="space-y-1 pt-1">
               <Label className="text-xs flex items-center gap-1">
@@ -261,7 +380,7 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
                   type="date"
                   value={scheduleDate}
                   onChange={(e) => setScheduleDate(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={new Date().toISOString().split("T")[0]}
                 />
                 <Input
                   type="time"
@@ -271,7 +390,8 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
               </div>
               {scheduleDate && scheduleTime && (
                 <p className="text-xs text-violet-600">
-                  📅 Pickup: {new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString()}
+                  📅 Pickup:{" "}
+                  {new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString()}
                 </p>
               )}
             </div>
@@ -287,10 +407,18 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
           ) : (
             <div className="space-y-3">
               {cart.items.map((item) => (
-                <div key={item.menuItemId} className="space-y-1">
+                <div key={item.id} className="space-y-1">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <p className="font-medium text-sm">{item.name}</p>
+                      {item.selectedModifiers &&
+                        item.selectedModifiers.length > 0 && (
+                          <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-0.5">
+                            {item.selectedModifiers
+                              .map((m) => m.name)
+                              .join(", ")}
+                          </p>
+                        )}
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         {item.discount > 0 ? (
                           <>
@@ -311,7 +439,7 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
                         variant="outline"
                         size="icon"
                         className="h-7 w-7"
-                        onClick={() => cart.updateQuantity(item.menuItemId, -1)}
+                        onClick={() => cart.updateQuantity(item.id, -1)}
                       >
                         <Minus className="w-3 h-3" />
                       </Button>
@@ -322,7 +450,7 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
                         variant="outline"
                         size="icon"
                         className="h-7 w-7"
-                        onClick={() => cart.updateQuantity(item.menuItemId, 1)}
+                        onClick={() => cart.updateQuantity(item.id, 1)}
                       >
                         <Plus className="w-3 h-3" />
                       </Button>
@@ -330,7 +458,7 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-destructive"
-                        onClick={() => cart.removeItem(item.menuItemId)}
+                        onClick={() => cart.removeItem(item.id)}
                       >
                         <Trash2 className="w-3 h-3" />
                       </Button>
@@ -340,12 +468,12 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
                   <button
                     className="text-xs text-muted-foreground flex items-center gap-1 hover:text-foreground"
                     onClick={() => {
-                      setNotesItemId(item.menuItemId);
-                      setNotesValue(item.notes || '');
+                      setNotesItemId(item.id);
+                      setNotesValue(item.notes || "");
                     }}
                   >
                     <MessageSquare className="w-3 h-3" />
-                    {item.notes || 'Add note / allergy'}
+                    {item.notes || "Add note / allergy"}
                   </button>
                 </div>
               ))}
@@ -371,10 +499,16 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
                 <span>Tax (7%)</span>
                 <span>{formatCurrency(cart.tax)}</span>
               </div>
+              {pointsToRedeem > 0 && (
+                <div className="flex justify-between text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded -mx-2 mt-1">
+                  <span>Points ({pointsToRedeem})</span>
+                  <span>-{formatCurrency(pointsToRedeem * 0.1)}</span>
+                </div>
+              )}
               <Separator />
               <div className="flex justify-between font-bold text-base">
                 <span>Total</span>
-                <span>{formatCurrency(cart.total)}</span>
+                <span>{formatCurrency(displayTotal)}</span>
               </div>
             </div>
           )}
@@ -386,34 +520,36 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
             </Label>
             <div className="grid grid-cols-3 gap-2">
               <Button
-                variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
+                variant={paymentMethod === "CASH" ? "default" : "outline"}
                 size="sm"
                 className="gap-1 h-10"
-                onClick={() => setPaymentMethod('CASH')}
+                onClick={() => setPaymentMethod("CASH")}
               >
                 <Banknote className="w-3.5 h-3.5" />
                 Cash
               </Button>
               <Button
-                variant={paymentMethod === 'CARD_EXTERNAL' ? 'default' : 'outline'}
+                variant={
+                  paymentMethod === "CARD_EXTERNAL" ? "default" : "outline"
+                }
                 size="sm"
                 className="gap-1 h-10"
-                onClick={() => setPaymentMethod('CARD_EXTERNAL')}
+                onClick={() => setPaymentMethod("CARD_EXTERNAL")}
               >
                 <CreditCard className="w-3.5 h-3.5" />
                 Card
               </Button>
               <Button
-                variant={paymentMethod === 'LATER_PAY' ? 'default' : 'outline'}
+                variant={paymentMethod === "LATER_PAY" ? "default" : "outline"}
                 size="sm"
                 className="gap-1 h-10"
-                onClick={() => setPaymentMethod('LATER_PAY')}
+                onClick={() => setPaymentMethod("LATER_PAY")}
               >
                 <Clock className="w-3.5 h-3.5" />
                 Later
               </Button>
             </div>
-            {paymentMethod === 'LATER_PAY' && (
+            {paymentMethod === "LATER_PAY" && (
               <p className="text-xs text-amber-600">
                 ⚠️ Payment will be collected on pickup/handover
               </p>
@@ -443,7 +579,9 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
       {/* Notes Dialog */}
       <Dialog
         open={notesItemId !== null}
-        onOpenChange={(open) => { if (!open) setNotesItemId(null); }}
+        onOpenChange={(open) => {
+          if (!open) setNotesItemId(null);
+        }}
       >
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -460,27 +598,31 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
               autoFocus
             />
             <div className="flex flex-wrap gap-1">
-              {['No nuts', 'Gluten-free', 'Dairy-free', 'Extra spicy', 'No onions'].map(
-                (tag) => (
-                  <Badge
-                    key={tag}
-                    variant="outline"
-                    className="cursor-pointer hover:bg-primary/10 text-xs"
-                    onClick={() =>
-                      setNotesValue((prev) => prev ? `${prev}, ${tag}` : tag)
-                    }
-                  >
-                    {tag}
-                  </Badge>
-                )
-              )}
+              {[
+                "No nuts",
+                "Gluten-free",
+                "Dairy-free",
+                "Extra spicy",
+                "No onions",
+              ].map((tag) => (
+                <Badge
+                  key={tag}
+                  variant="outline"
+                  className="cursor-pointer hover:bg-primary/10 text-xs"
+                  onClick={() =>
+                    setNotesValue((prev) => (prev ? `${prev}, ${tag}` : tag))
+                  }
+                >
+                  {tag}
+                </Badge>
+              ))}
             </div>
           </div>
           <DialogFooter>
             <Button
               variant="outline"
               onClick={() => {
-                if (notesItemId) cart.setNotes(notesItemId, '');
+                if (notesItemId) cart.setNotes(notesItemId, "");
                 setNotesItemId(null);
               }}
             >
@@ -497,6 +639,16 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ModifierSelector
+        item={modifyingItem}
+        modifierGroups={modifyingItem?.modifierGroups || []}
+        onCancel={() => setModifyingItem(null)}
+        onConfirm={(itemToCart, mods) => {
+          cart.addItem(itemToCart, mods);
+          setModifyingItem(null);
+        }}
+      />
     </div>
   );
 }

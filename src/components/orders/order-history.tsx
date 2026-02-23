@@ -310,33 +310,59 @@ export function OrderHistory() {
                     <div className="border-t border-border p-4 space-y-3 bg-muted/10">
                       {/* Items */}
                       <div className="space-y-1">
-                        {order.items.map((item) => (
-                          <div
-                            key={item.id}
-                            className={cn(
-                              'flex items-center justify-between py-1 px-2 rounded text-sm',
-                              item.status === 'VOIDED' && 'line-through opacity-50',
-                              item.refunded && 'bg-amber-50'
-                            )}
-                          >
-                            <span>
-                              {item.quantity}× {item.menuItem.name}
-                              {item.notes && (
-                                <span className="text-xs text-amber-500 ml-2">
-                                  ({item.notes})
+                        {order.items.map((item) => {
+                          const baseItemPrice = item.menuItem.basePrice;
+                          const modsTotal = item.modifiers?.reduce((s: number, m: any) => s + Number(m.price), 0) || 0;
+                          const originalItemTotal = (baseItemPrice + modsTotal) * item.quantity;
+                          const actualItemTotal = item.frozenPrice * item.quantity;
+                          const difference = originalItemTotal - actualItemTotal;
+                          
+                          return (
+                            <div
+                              key={item.id}
+                              className={cn(
+                                'flex items-center justify-between py-2 px-3 rounded text-sm',
+                                item.status === 'VOIDED' && 'line-through opacity-50',
+                                item.refunded ? 'bg-amber-50' : 'bg-background border border-border/50'
+                              )}
+                            >
+                              <div className="flex flex-col">
+                                <span className="font-semibold text-foreground">
+                                  {item.quantity}× {item.menuItem.name}
                                 </span>
-                              )}
-                              {item.refunded && (
-                                <Badge variant="outline" className="ml-2 text-xs text-amber-600">
-                                  Refunded
-                                </Badge>
-                              )}
-                            </span>
-                            <span className="font-medium">
-                              {formatCurrency(item.frozenPrice * item.quantity)}
-                            </span>
-                          </div>
-                        ))}
+                                
+                                {item.notes && (
+                                  <span className="text-xs text-amber-500">
+                                    Notes: {item.notes}
+                                  </span>
+                                )}
+                                
+                                {item.modifiers && item.modifiers.length > 0 && (
+                                  <span className="text-[11px] text-muted-foreground mt-0.5 max-w-sm leading-tight">
+                                    + {item.modifiers.map((m: any) => `${m.name} (${formatCurrency(m.price)})`).join(', ')}
+                                  </span>
+                                )}
+                                
+                                {item.refunded && (
+                                  <Badge variant="outline" className="w-fit mt-1 text-[10px] text-amber-600 border-amber-200">
+                                    Refunded
+                                  </Badge>
+                                )}
+                              </div>
+                              
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span className={cn("font-medium", difference > 0.01 ? "text-emerald-600" : "text-foreground")}>
+                                  {formatCurrency(actualItemTotal)}
+                                </span>
+                                {difference > 0.01 && (
+                                  <span className="text-[10px] text-muted-foreground line-through">
+                                    {formatCurrency(originalItemTotal)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
 
                       <Separator />
@@ -344,7 +370,22 @@ export function OrderHistory() {
                       {/* Order Meta */}
                       <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                         <span>By: {order.createdBy?.name}</span>
-                        {order.paymentMethod && <span>Payment: {order.paymentMethod}</span>}
+                        {order.payments?.length > 0 ? (
+                          <div className="flex flex-col gap-1 w-full mt-2 border-t pt-2 border-border/50">
+                            <span className="font-semibold text-foreground">Payment Details:</span>
+                            {order.payments.map((p) => (
+                              <div key={p.id} className="flex justify-between items-center bg-background px-3 py-1.5 rounded border border-border/50">
+                                <span className="flex items-center gap-2">
+                                  <Badge variant="outline" className="text-[10px] h-5">{p.method}</Badge>
+                                  <span className="text-[11px] text-muted-foreground">{new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                </span>
+                                <span className="font-medium text-foreground">{formatCurrency(p.amount)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : order.paymentMethod ? (
+                          <span>Payment: {order.paymentMethod}</span>
+                        ) : null}
                         {order.discount > 0 && (
                           <span className="text-emerald-500">
                             Discount: -{formatCurrency(order.discount)}
@@ -453,6 +494,11 @@ export function OrderHistory() {
                         />
                         <span className="flex-1 text-sm">
                           {item.quantity}× {item.menuItem.name}
+                          {item.modifiers && item.modifiers.length > 0 && (
+                            <span className="text-xs text-muted-foreground ml-1">
+                              [{item.modifiers.map((m: any) => m.name).join(', ')}]
+                            </span>
+                          )}
                         </span>
                         <span className="text-sm font-medium">
                           {formatCurrency(item.frozenPrice * item.quantity)}

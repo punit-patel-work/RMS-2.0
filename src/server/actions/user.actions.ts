@@ -6,6 +6,7 @@ import { hash } from 'bcryptjs';
 import type { Role } from '@/generated/prisma/client';
 
 export async function createUser(
+    employeeId: string,
     name: string,
     role: Role,
     pin: string
@@ -13,13 +14,13 @@ export async function createUser(
     try {
         const hashedPin = await hash(pin, 10);
         await prisma.user.create({
-            data: { name, role, pinCode: hashedPin },
+            data: { employeeId, name, role, pinCode: hashedPin },
         });
         revalidatePath('/(dashboard)/admin/users', 'page');
         return { success: true };
     } catch (error: any) {
         if (error?.code === 'P2002') {
-            return { success: false, error: 'PIN already in use' };
+            return { success: false, error: 'Employee ID already in use' };
         }
         console.error('Failed to create user:', error);
         return { success: false, error: 'Failed to create user' };
@@ -28,10 +29,11 @@ export async function createUser(
 
 export async function updateUser(
     userId: string,
-    data: { name?: string; role?: Role; pin?: string }
+    data: { employeeId?: string; name?: string; role?: Role; pin?: string }
 ) {
     try {
         const updateData: any = {};
+        if (data.employeeId) updateData.employeeId = data.employeeId;
         if (data.name) updateData.name = data.name;
         if (data.role) updateData.role = data.role;
         if (data.pin) updateData.pinCode = await hash(data.pin, 10);
@@ -44,7 +46,7 @@ export async function updateUser(
         return { success: true };
     } catch (error: any) {
         if (error?.code === 'P2002') {
-            return { success: false, error: 'PIN already in use' };
+            return { success: false, error: 'Employee ID already in use' };
         }
         console.error('Failed to update user:', error);
         return { success: false, error: 'Failed to update user' };

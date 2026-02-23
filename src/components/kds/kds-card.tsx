@@ -17,6 +17,7 @@ interface OrderItem {
   notes?: string | null;
   status: string;
   menuItem: { name: string };
+  modifiers?: { name: string }[];
 }
 
 interface KdsOrder {
@@ -151,8 +152,13 @@ export function KdsCard({ order }: { order: KdsOrder }) {
               <span className="font-medium text-sm">
                 {item.quantity}× {item.menuItem.name}
               </span>
+              {item.modifiers && item.modifiers.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {item.modifiers.map(m => m.name).join(', ')}
+                </p>
+              )}
               {item.notes && (
-                <p className="text-xs text-amber-500">⚠ {item.notes}</p>
+                <p className="text-xs text-amber-500 mt-0.5">⚠ {item.notes}</p>
               )}
             </div>
             {item.status === 'PENDING' && (

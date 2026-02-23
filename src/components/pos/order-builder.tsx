@@ -31,6 +31,8 @@ import {
   MessageSquare,
   AlertTriangle,
   Search,
+  UserPlus,
+  Gift,
 } from 'lucide-react';
 import { useCartStore } from '@/stores/cart-store';
 import {
@@ -42,10 +44,12 @@ import {
   printBill,
   voidOrder,
 } from '@/server/actions/order.actions';
+import { verifyCustomer, registerCustomer } from '@/server/actions/crm.actions';
 import { formatCurrency } from '@/lib/pricing';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { Promotion, MenuItem, Category } from '@/generated/prisma/client';
+import { ModifierSelector } from '@/components/pos/modifier-selector';
 
 interface OrderItemData {
   id: string;
@@ -59,14 +63,22 @@ interface OrderItemData {
 interface TableData {
   id: string;
   name: string;
-  status: string;
+  status: 'VACANT' | 'OCCUPIED' | 'BILL_PRINTED';
   currentOrder?: {
     id: string;
     total: number;
     subtotal: number;
     discount: number;
+    amountPaid: number;
+    paymentMethod: string | null;
     items: OrderItemData[];
   } | null;
+  reservations: {
+    id: string;
+    guestName: string;
+    reservedAt: Date;
+    reservedUntil: Date;
+  }[];
 }
 
 type CategoryWithItems = Category & {
@@ -106,9 +118,20 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
   const [quickSalePayment, setQuickSalePayment] = useState<'CASH' | 'CARD_EXTERNAL' | null>(null);
   
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [splitAmountStr, setSplitAmountStr] = useState('');
   const [notesItemId, setNotesItemId] = useState<string | null>(null);
   const [notesValue, setNotesValue] = useState('');
   const [menuSearch, setMenuSearch] = useState('');
+  const [modifyingItem, setModifyingItem] = useState<any | null>(null);
+
+  // CRM / Loyalty State
+  const [loyaltyOpen, setLoyaltyOpen] = useState(false);
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerData, setCustomerData] = useState<any>(null);
+  const [customerNameInput, setCustomerNameInput] = useState('');
+  const [loyaltyStatus, setLoyaltyStatus] = useState<'idle' | 'loading' | 'found' | 'not_found' | 'registering'>('idle');
+  const [usePoints, setUsePoints] = useState(false);
+
   const cart = useCartStore();
 
   // Set table and promotions context on mount
@@ -139,30 +162,34 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
     (i) => i.status === 'PENDING' || i.status === 'READY'
   );
 
+  const maxRedeemablePoints = customerData && table.currentOrder ? Math.min(customerData.pointsBalance, Math.ceil((table.currentOrder.total - table.currentOrder.amountPaid) / 0.1)) : 0;
+  const pointsToRedeem = usePoints ? maxRedeemablePoints : 0;
+
   const handleFireOrder = () => {
     if (cart.items.length === 0) {
       toast.error('Add items before firing');
       return;
     }
-
     startTransition(async () => {
-      const result = await fireOrder({
+      const res = await fireOrder({
         tableId: table.id,
-        orderType: 'DINE_IN',
         userId: (session?.user as any)?.id ?? '',
+        orderType: 'DINE_IN',
+        pointsToRedeem: 0,
         items: cart.items.map((i) => ({
           menuItemId: i.menuItemId,
           quantity: i.quantity,
           notes: i.notes,
+          selectedModifiers: i.selectedModifiers,
         })),
+        customerId: customerData?.id,
       });
-
-      if (result.success) {
+      if (res.success) {
         toast.success('Order fired to kitchen! 🔥');
         cart.reset();
         router.refresh(); // Refresh to show occupied status or transaction
       } else {
-        toast.error(result.error);
+        toast.error(res.error);
       }
     });
   };
@@ -218,12 +245,38 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
   const handlePayment = (method: 'CASH' | 'CARD_EXTERNAL') => {
     if (!table.currentOrder) return;
 
+    // Assuming table.currentOrder might have an amountPaid field or similar for split payments
+    // For now, we'll use 0 if not present, and assume the server action handles the actual remaining balance.
+    const remaining = table.currentOrder.total - table.currentOrder.amountPaid;
+    const remainingAfterPoints = Math.max(0, remaining - (pointsToRedeem * 0.1));
+    let payAmt = remainingAfterPoints;
+
+    if (splitAmountStr) {
+      const parsed = parseFloat(splitAmountStr);
+      if (isNaN(parsed) || parsed <= 0) {
+        toast.error('Invalid payment amount');
+        return;
+      }
+      if (parsed > remainingAfterPoints) {
+        toast.error('Payment exceeds remaining balance');
+        return;
+      }
+      payAmt = parsed;
+    }
+
     startTransition(async () => {
-      const result = await recordPayment(table.currentOrder!.id, method);
+      // Pass the pointsToRedeem and customerId to correctly record payment with point discounts
+      const result = await recordPayment(table.currentOrder!.id, method, payAmt, pointsToRedeem, customerData?.id);
       if (result.success) {
-        toast.success('Payment recorded ✓');
-        setPaymentOpen(false);
-        router.push('/pos');
+        toast.success(`Paid ${formatCurrency(payAmt)} ✓`);
+        setSplitAmountStr('');
+        // If the paid amount covers the remaining, close payment dialog
+        // This logic might need refinement based on actual backend remaining balance
+        if (payAmt >= remainingAfterPoints) { 
+          setPaymentOpen(false);
+          setUsePoints(false); // reset points usage for next payment
+          router.push('/pos'); 
+        }
         router.refresh();
       } else {
         toast.error(result.error);
@@ -258,8 +311,34 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
     });
   };
 
+  const handleSearchCustomer = async () => {
+    if (!customerPhone.trim() || customerPhone.length < 5) return;
+    setLoyaltyStatus('loading');
+    const res = await verifyCustomer(customerPhone.trim());
+    if (res.success) {
+      setCustomerData(res.customer);
+      setLoyaltyStatus('found');
+    } else {
+      setCustomerData(null);
+      setLoyaltyStatus('not_found');
+    }
+  };
+
+  const handleRegisterCustomer = async () => {
+    setLoyaltyStatus('registering');
+    const res = await registerCustomer(customerPhone.trim(), customerNameInput.trim() || undefined);
+    if (res.success) {
+      setCustomerData(res.customer);
+      setLoyaltyStatus('found');
+      toast.success('Customer registered!');
+    } else {
+      setLoyaltyStatus('not_found');
+      toast.error(res.error);
+    }
+  };
+
   return (
-    <div className="flex flex-col md:flex-row h-[100dvh] overflow-hidden">
+    <div className="flex flex-col md:flex-row h-full overflow-hidden">
       {/* Left: Menu Browser */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
         {/* Header */}
@@ -324,7 +403,21 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                   'cursor-pointer transition-all duration-150 active:scale-95',
                   'hover:bg-muted/50 border-border/50'
                 )}
-                onClick={() => cart.addItem(item)}
+                onClick={() => {
+                  const maxQty = item.trackStock ? item.stockQuantity : Infinity;
+                  const currentQty = cart.items.find((i) => i.menuItemId === item.id)?.quantity || 0;
+                  
+                  if (currentQty >= maxQty) {
+                    toast.error(`Out of stock! Only ${maxQty} available.`);
+                    return;
+                  }
+
+                  if ((item as any).modifierGroups && (item as any).modifierGroups.length > 0) {
+                    setModifyingItem(item);
+                  } else {
+                    cart.addItem(item);
+                  }
+                }}
               >
                 <CardContent className="p-4 space-y-2">
                   <h3 className="font-semibold text-sm leading-tight">
@@ -458,10 +551,15 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                 </h3>
               )}
               {cart.items.map((item) => (
-                <div key={item.menuItemId} className="space-y-1">
+                <div key={item.id} className="space-y-1">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <p className="font-medium text-sm">{item.name}</p>
+                      {item.selectedModifiers && item.selectedModifiers.length > 0 && (
+                        <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-0.5">
+                          {item.selectedModifiers.map(m => m.name).join(', ')}
+                        </p>
+                      )}
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         {item.discount > 0 && (
                           <>
@@ -484,7 +582,7 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                         size="icon"
                         className="h-7 w-7"
                         onClick={() =>
-                          cart.updateQuantity(item.menuItemId, -1)
+                          cart.updateQuantity(item.id, -1)
                         }
                       >
                         <Minus className="w-3 h-3" />
@@ -496,9 +594,15 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                         variant="outline"
                         size="icon"
                         className="h-7 w-7"
-                        onClick={() =>
-                          cart.updateQuantity(item.menuItemId, 1)
-                        }
+                        onClick={() => {
+                          const originalItem = currentItems.find((i) => i.id === item.menuItemId) || categories.flatMap(c => c.items).find(i => i.id === item.menuItemId);
+                          const maxQty = (originalItem && originalItem.trackStock) ? originalItem.stockQuantity : Infinity;
+                          if (item.quantity >= maxQty) {
+                            toast.error(`Maximum stock reached`);
+                            return;
+                          }
+                          cart.updateQuantity(item.id, 1);
+                        }}
                       >
                         <Plus className="w-3 h-3" />
                       </Button>
@@ -506,7 +610,7 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-destructive"
-                        onClick={() => cart.removeItem(item.menuItemId)}
+                        onClick={() => cart.removeItem(item.id)}
                       >
                         <Trash2 className="w-3 h-3" />
                       </Button>
@@ -519,7 +623,7 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                       <button
                         className="text-xs text-amber-600 flex items-center gap-1 hover:underline"
                         onClick={() => {
-                          setNotesItemId(item.menuItemId);
+                          setNotesItemId(item.id);
                           setNotesValue(item.notes || '');
                         }}
                       >
@@ -530,7 +634,7 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                       <button
                         className="text-xs text-muted-foreground flex items-center gap-1 hover:text-foreground"
                         onClick={() => {
-                          setNotesItemId(item.menuItemId);
+                          setNotesItemId(item.id);
                           setNotesValue('');
                         }}
                       >
@@ -568,6 +672,31 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                 <span>Total</span>
                 <span>{formatCurrency(cart.total)}</span>
               </div>
+            </div>
+          )}
+
+          {/* Loyalty Section (Before Fire Order) */}
+          {!hasExistingOrder && (
+            <div className="mb-2">
+              <Button
+                variant={customerData ? 'secondary' : 'outline'}
+                className="w-full justify-between h-12"
+                onClick={() => setLoyaltyOpen(true)}
+              >
+                <div className="flex items-center gap-2">
+                  <UserPlus className="w-4 h-4" />
+                  {customerData ? (
+                    <span className="font-semibold text-blue-600">{customerData.name || customerData.phone}</span>
+                  ) : (
+                    <span>Attach Customer / Loyalty</span>
+                  )}
+                </div>
+                {customerData && (
+                  <Badge variant="outline" className="bg-blue-100 text-blue-800">
+                    {customerData.pointsBalance} pts
+                  </Badge>
+                )}
+              </Button>
             </div>
           )}
 
@@ -672,12 +801,73 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
           <DialogHeader>
             <DialogTitle>Record Payment</DialogTitle>
           </DialogHeader>
-          <div className="py-4 text-center">
-            <p className="text-3xl font-bold">
-              {formatCurrency(table.currentOrder?.total ?? 0)}
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Order for {table.name}
+          <div className="py-4 space-y-4 text-center">
+            <div className="flex justify-between text-sm px-4">
+              <span className="text-muted-foreground">Order Total:</span>
+              <span className="font-semibold">{formatCurrency(table.currentOrder?.total ?? 0)}</span>
+            </div>
+            
+            {(table.currentOrder?.amountPaid || 0) > 0 && (
+              <div className="flex justify-between text-sm px-4 text-emerald-600">
+                <span>Amount Paid:</span>
+                <span className="font-semibold">-{formatCurrency(table.currentOrder!.amountPaid)}</span>
+              </div>
+            )}
+            
+            <Separator />
+            
+            <div className="flex justify-between text-lg px-4 font-bold">
+              <span>Remaining:</span>
+              <span>{formatCurrency(Math.max(0, (table.currentOrder?.total ?? 0) - (table.currentOrder?.amountPaid ?? 0) - (pointsToRedeem * 0.1)))}</span>
+            </div>
+
+            {customerData && (
+              <div className="mx-4 mt-2 mb-2 p-3 border border-blue-200 bg-blue-50 rounded-lg flex flex-col items-center">
+                 <div className="flex justify-between w-full items-center mb-2 text-sm text-blue-900">
+                    <div className="flex gap-2 items-center">
+                       <Gift className="w-4 h-4" />
+                       <span className="font-semibold">{customerData.name || 'Customer'}</span>
+                    </div>
+                    <span className="font-bold">{customerData.pointsBalance} pts</span>
+                 </div>
+                 {customerData.pointsBalance > 0 && maxRedeemablePoints > 0 && (
+                    <Button 
+                       variant={usePoints ? "default" : "outline"}
+                       size="sm"
+                       className={cn("w-full h-8", usePoints ? "bg-blue-600 text-white" : "border-blue-300 text-blue-700 hover:bg-blue-100")}
+                       onClick={() => setUsePoints(!usePoints)}
+                    >
+                       {usePoints ? "Points Applied!" : `Redeem ${maxRedeemablePoints} pts for -${formatCurrency(maxRedeemablePoints * 0.1)}`}
+                    </Button>
+                 )}
+              </div>
+            )}
+            
+            {!customerData && (
+                <Button variant="ghost" className="w-full text-blue-600 h-8" onClick={() => { setPaymentOpen(false); setLoyaltyOpen(true); }}>
+                   Attach Loyalty / Customer Before Paying
+                </Button>
+            )}
+
+            <div className="px-4 text-left">
+              <label className="text-sm font-semibold mb-1 block">Custom Amount (Split Check)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 text-muted-foreground">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  max={Math.max(0, (table.currentOrder?.total ?? 0) - (table.currentOrder?.amountPaid || 0) - (pointsToRedeem * 0.1))}
+                  placeholder="Leave empty to pay full remaining"
+                  value={splitAmountStr}
+                  onChange={(e) => setSplitAmountStr(e.target.value)}
+                  className="w-full pl-7 pr-3 py-2 border rounded-md"
+                />
+              </div>
+            </div>
+            
+            <p className="text-sm text-amber-600 mt-2 font-medium">
+              Order stays open until fully paid or cleared
             </p>
           </div>
           <DialogFooter className="flex gap-3 sm:justify-center">
@@ -767,6 +957,81 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
             >
               Save
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ModifierSelector
+        item={modifyingItem}
+        modifierGroups={modifyingItem?.modifierGroups || []}
+        onCancel={() => setModifyingItem(null)}
+        onConfirm={(itemToCart, mods) => {
+          cart.addItem(itemToCart, mods);
+          setModifyingItem(null);
+        }}
+      />
+
+      {/* Loyalty / Customer Dialog */}
+      <Dialog open={loyaltyOpen} onOpenChange={setLoyaltyOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Customer Loyalty</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">Phone Number</label>
+              <div className="flex gap-2">
+                <Input
+                  type="tel"
+                  placeholder="e.g. 555-1234"
+                  value={customerPhone}
+                  onChange={(e) => {
+                    setCustomerPhone(e.target.value);
+                    setLoyaltyStatus('idle');
+                  }}
+                />
+                <Button onClick={handleSearchCustomer} disabled={loyaltyStatus === 'loading' || !customerPhone.trim()}>
+                  {loyaltyStatus === 'loading' ? '...' : <Search className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+
+            {(loyaltyStatus === 'not_found' || loyaltyStatus === 'registering') && (
+              <div className="p-4 bg-muted/50 rounded-lg space-y-3">
+                <p className="text-sm font-medium">Customer not found. Create new?</p>
+                <Input
+                  placeholder="Customer Name (Optional)"
+                  value={customerNameInput}
+                  onChange={(e) => setCustomerNameInput(e.target.value)}
+                />
+                <Button onClick={handleRegisterCustomer} className="w-full" disabled={loyaltyStatus === 'registering'}>
+                  {loyaltyStatus === 'registering' ? 'Registering...' : 'Register Customer'}
+                </Button>
+              </div>
+            )}
+
+            {loyaltyStatus === 'found' && customerData && (
+              <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-lg text-center space-y-2">
+                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <Gift className="w-6 h-6" />
+                </div>
+                <p className="font-semibold text-lg">{customerData.name || customerData.phone}</p>
+                <div className="inline-block bg-white px-3 py-1 rounded-full shadow-sm border text-sm font-bold text-blue-600">
+                  {customerData.pointsBalance} Points Available
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            {loyaltyStatus === 'found' ? (
+              <Button onClick={() => setLoyaltyOpen(false)} className="w-full bg-blue-600 hover:bg-blue-700">
+                Attach to Order
+              </Button>
+            ) : (
+              <Button onClick={() => setLoyaltyOpen(false)} variant="ghost" className="w-full">
+                Close
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

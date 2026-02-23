@@ -28,10 +28,13 @@ interface CartStore {
     // Actions
     setTable: (tableId: string, tableName: string) => void;
     setPromotions: (promotions: ExtendedPromotion[]) => void;
-    addItem: (item: Pick<MenuItem, 'id' | 'name' | 'basePrice' | 'categoryId'>) => void;
-    removeItem: (menuItemId: string) => void;
-    updateQuantity: (menuItemId: string, delta: number) => void;
-    setNotes: (menuItemId: string, notes: string) => void;
+    addItem: (
+        item: Pick<MenuItem, 'id' | 'name' | 'basePrice' | 'categoryId'>,
+        selectedModifiers?: { modifierId: string; name: string; priceAdjustment: number }[]
+    ) => void;
+    removeItem: (cartItemId: string) => void;
+    updateQuantity: (cartItemId: string, delta: number) => void;
+    setNotes: (cartItemId: string, notes: string) => void;
     reset: () => void;
 }
 
@@ -107,26 +110,32 @@ export const useCartStore = create<CartStore>((set) => ({
         return { promotions, ...res };
     }),
 
-    addItem: (item) =>
+    addItem: (item, selectedModifiers) =>
         set((state) => {
-            const existing = state.items.find((i) => i.menuItemId === item.id);
+            const sortedMods = [...(selectedModifiers || [])].sort((a, b) => a.modifierId.localeCompare(b.modifierId));
+            const signature = JSON.stringify({ id: item.id, mods: sortedMods.map(m => m.modifierId) });
+
+            const existing = state.items.find((i) => i.id === signature);
             let updatedItems: CartItem[];
 
             if (existing) {
                 updatedItems = state.items.map((i) =>
-                    i.menuItemId === item.id
+                    i.id === signature
                         ? { ...i, quantity: i.quantity + 1 }
                         : i
                 );
             } else {
+                const modifierTotal = sortedMods.reduce((sum, mod) => sum + mod.priceAdjustment, 0);
                 const newItem: CartItem = {
+                    id: signature,
                     menuItemId: item.id,
                     name: item.name,
                     quantity: 1,
-                    basePrice: item.basePrice,
-                    categoryId: item.categoryId, // Ensure this is stored
-                    effectivePrice: item.basePrice,
+                    basePrice: item.basePrice + modifierTotal,
+                    categoryId: item.categoryId,
+                    effectivePrice: item.basePrice + modifierTotal,
                     discount: 0,
+                    selectedModifiers: sortedMods,
                 };
                 updatedItems = [...state.items, newItem];
             }
@@ -134,17 +143,17 @@ export const useCartStore = create<CartStore>((set) => ({
             return recalc(updatedItems, state.promotions);
         }),
 
-    removeItem: (menuItemId) =>
+    removeItem: (cartItemId) =>
         set((state) => {
-            const updatedItems = state.items.filter((i) => i.menuItemId !== menuItemId);
+            const updatedItems = state.items.filter((i) => i.id !== cartItemId);
             return recalc(updatedItems, state.promotions);
         }),
 
-    updateQuantity: (menuItemId, delta) =>
+    updateQuantity: (cartItemId, delta) =>
         set((state) => {
             const updatedItems = state.items
                 .map((i) =>
-                    i.menuItemId === menuItemId
+                    i.id === cartItemId
                         ? { ...i, quantity: Math.max(0, i.quantity + delta) }
                         : i
                 )
@@ -152,10 +161,10 @@ export const useCartStore = create<CartStore>((set) => ({
             return recalc(updatedItems, state.promotions);
         }),
 
-    setNotes: (menuItemId, notes) =>
+    setNotes: (cartItemId, notes) =>
         set((state) => ({
             items: state.items.map((i) =>
-                i.menuItemId === menuItemId ? { ...i, notes } : i
+                i.id === cartItemId ? { ...i, notes } : i
             ),
         })),
 

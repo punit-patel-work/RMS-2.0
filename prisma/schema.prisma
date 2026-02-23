@@ -77,17 +77,20 @@ enum PromotionScope {
 // ─── User ────────────────────────────────────────────────────
 
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  role      Role
-  pinCode   String   @unique          // 4-6 digit staff PIN (hashed)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  employeeId String   @unique          // e.g. "101"
+  name       String
+  role       Role
+  pinCode    String                    // 4-6 digit staff PIN (hashed) (No longer unique)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   orders         Order[]        // Orders created by this user
   refundedOrders Order[]        @relation("RefundedBy")
   reservations   Reservation[]  // Reservations created by this user
+  attendances    AttendanceRecord[] // Staff time tracking
+  schedules      Schedule[]     // Staff shifts
 }
 
 // ─── Table ───────────────────────────────────────────────────
@@ -98,6 +101,13 @@ model Table {
   seats          Int         @default(4)
   status         TableStatus @default(VACANT)
   currentOrderId String?     @unique           // FK to the active Order
+
+  // Visual Floor Plan Positioning
+  positionX      Int         @default(0)
+  positionY      Int         @default(0)
+  width          Int         @default(100)
+  height         Int         @default(100)
+  shape          String      @default("SQUARE") // "SQUARE" or "ROUND"
 
   currentOrder   Order?        @relation("ActiveTableOrder", fields: [currentOrderId], references: [id])
   orders         Order[]       @relation("TableOrders")
@@ -134,13 +144,25 @@ model Reservation {
   @@index([reservedAt])
 }
 
-// ─── Category & MenuItem ─────────────────────────────────────
+// ─── Station & Category & MenuItem ─────────────────────────────
+
+model Station {
+  id        String     @id @default(cuid())
+  name      String     @unique       // e.g. "Kitchen", "Bar"
+  categories Category[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
 
 model Category {
   id        String     @id @default(cuid())
   name      String     @unique       // e.g. "Appetizers", "Mains"
   sortOrder Int        @default(0)
   items     MenuItem[]
+  
+  stationId String?
+  station   Station?   @relation(fields: [stationId], references: [id])
   promotions Promotion[]
   promotionRules PromotionRule[]
 
@@ -152,9 +174,11 @@ model MenuItem {
   id          String   @id @default(cuid())
   name        String
   description String?
-  basePrice   Float                       // NEVER overwritten by promotions
-  isAvailable Boolean  @default(true)     // Toggle for 86-ing items
-  imageUrl    String?
+  basePrice     Float                       // NEVER overwritten by promotions
+  isAvailable   Boolean  @default(true)     // Toggle for 86-ing items
+  trackStock    Boolean  @default(false)    // If true, automatically decrement stockQuantity
+  stockQuantity Int      @default(0)        // Current stock level
+  imageUrl      String?
 
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id])
@@ -162,6 +186,7 @@ model MenuItem {
   orderItems  OrderItem[]
   promotions  Promotion[]
   promotionRules PromotionRule[]
+  modifierGroups ModifierGroup[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -230,9 +255,11 @@ model Order {
   orderType     OrderType     @default(DINE_IN)
   paymentMethod PaymentMethod?
 
-  // Takeout customer info
+  // Takeout / CRM customer info
   customerName  String?
   customerPhone String?
+  customerId    String?
+  customer      Customer? @relation(fields: [customerId], references: [id])
 
   // Scheduling (null = ASAP)
   scheduledAt   DateTime?
@@ -251,6 +278,9 @@ model Order {
   discount  Float       @default(0)   // Total promotion discount applied
   tax       Float       @default(0)   // 7% Tax
   total     Float       @default(0)   // subtotal - discount + tax
+  amountPaid Float      @default(0)   // Sum of all payments
+
+  payments  Payment[]
 
   // Refund tracking
   refundAmount  Float?
@@ -288,6 +318,7 @@ model OrderItem {
 
   menuItemId String
   menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  modifiers  OrderItemModifier[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -305,3 +336,94 @@ model SiteSettings {
   updatedAt DateTime @updatedAt
 }
 
+// ─── Menu Modifiers ──────────────────────────────────────────
+
+model ModifierGroup {
+  id         String     @id @default(cuid())
+  name       String     // e.g., "Meat Temperature", "Add-ons"
+  isRequired Boolean    @default(false)
+  maxChoices Int?       // e.g., 1 for "Meat Temp", null for "Add-ons"
+  
+  modifiers  Modifier[]
+  menuItems  MenuItem[] // Implicit many-to-many: an item can have many groups
+}
+
+model Modifier {
+  id              String        @id @default(cuid())
+  name            String        // e.g., "Rare", "Extra Cheese"
+  priceAdjustment Decimal       @default(0) // e.g., 1.50
+  
+  modifierGroupId String
+  modifierGroup   ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+  
+  orderItemMods   OrderItemModifier[]
+}
+
+// Track chosen modifiers on the order
+model OrderItemModifier {
+  id          String    @id @default(cuid())
+  
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  
+  modifierId  String
+  modifier    Modifier  @relation(fields: [modifierId], references: [id])
+  
+  // Snapshots for historical integrity
+  name        String
+  price       Decimal   @db.Decimal(10, 2)
+}
+
+// ─── CRM & Staff Management (Phase 3) ─────────────────────────
+
+// CRM Model
+model Customer {
+  id          String   @id @default(cuid())
+  phone       String   @unique // The unique ID for the customer
+  name        String?
+  pointsBalance Int    @default(0) // Loyalty points
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  orders      Order[]  // Track their past orders
+}
+
+// Attendance / Timeclock Model
+model AttendanceRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  clockIn     DateTime @default(now())
+  clockOut    DateTime? // Null means currently clocked in
+  
+  notes       String?  // Optional notes (e.g., "Forgot to clock out")
+}
+
+// Staff Schedulling Model
+model Schedule {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  startTime   DateTime
+  endTime     DateTime
+  role        Role?    // Optionally specify the role they are performing this shift
+  notes       String?  // Optional notes (e.g. "Closing shift")
+  isOnLeave   Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── Payment (Check Splitting) ───────────────────────────────
+
+model Payment {
+  id        String        @id @default(cuid())
+  orderId   String
+  order     Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount    Float
+  method    PaymentMethod
+  createdAt DateTime      @default(now())
+}

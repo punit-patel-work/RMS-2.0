@@ -41,7 +41,10 @@ export async function getOrders(filters: OrderFilters) {
             createdBy: { select: { name: true } },
             refundedBy: { select: { name: true } },
             items: {
-                include: { menuItem: { select: { name: true, basePrice: true } } },
+                include: { menuItem: { select: { name: true, basePrice: true } }, modifiers: true },
+                orderBy: { createdAt: 'asc' },
+            },
+            payments: {
                 orderBy: { createdAt: 'asc' },
             },
         },

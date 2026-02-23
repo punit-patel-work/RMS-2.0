@@ -1,0 +1,65 @@
+
+> rms2@0.1.0 build
+> next build
+
+ΓÜá Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\Punit\package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * C:\Users\Punit\Desktop\Programming\RMS2\package-lock.json
+
+Γû▓ Next.js 16.1.6 (Turbopack)
+- Environments: .env
+
+ΓÜá The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+  Creating an optimized production build ...
+
+> Build error occurred
+Error: Turbopack build failed with 2 errors:
+./Desktop/Programming/RMS2/src/components/admin/mock-campaign-creator.tsx:8:1
+Module not found: Can't resolve '@/components/ui/textarea'
+   6 | import { Button } from '@/components/ui/button';
+   7 | import { Label } from '@/components/ui/label';
+>  8 | import { Textarea } from '@/components/ui/textarea';
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   9 | import { Mail, MessageSquare, Send } from 'lucide-react';
+  10 | import { toast } from 'sonner';
+  11 | interface MockCampaignProps {
+
+Import map: aliased to relative './src/components/ui/textarea' inside of [project]/Desktop/Programming/RMS2
+
+
+Import trace:
+  Server Component:
+    ./Desktop/Programming/RMS2/src/components/admin/mock-campaign-creator.tsx
+    ./Desktop/Programming/RMS2/src/app/(dashboard)/admin/marketing/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./Desktop/Programming/RMS2/src/components/admin/mock-campaign-creator.tsx:7:1
+Module not found: Can't resolve '@/components/ui/textarea'
+   5 | import { Button } from '@/components/ui/button';
+   6 | import { Label } from '@/components/ui/label';
+>  7 | import { Textarea } from '@/components/ui/textarea';
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   8 | import { Mail, MessageSquare, Send } from 'lucide-react';
+   9 | import { toast } from 'sonner';
+  10 |
+
+Import map: aliased to relative './src/components/ui/textarea' inside of [project]/Desktop/Programming/RMS2
+
+
+Import trace:
+  Server Component:
+    ./Desktop/Programming/RMS2/src/components/admin/mock-campaign-creator.tsx
+    ./Desktop/Programming/RMS2/src/app/(dashboard)/admin/marketing/page.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+    at <unknown> (./Desktop/Programming/RMS2/src/components/admin/mock-campaign-creator.tsx:8:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./Desktop/Programming/RMS2/src/components/admin/mock-campaign-creator.tsx:7:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)

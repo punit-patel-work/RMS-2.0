@@ -10,18 +10,25 @@ import { calculateCart } from '@/lib/cart-calculations';
 
 const createOrderSchema = z.object({
     tableId: z.string().optional(),
-    userId: z.string().min(1, 'User ID is required'),
+    userId: z.string().optional(), // Optional for Online Storefront orders
     orderType: z.enum(['DINE_IN', 'TAKEOUT', 'QUICK_SALE']).default('DINE_IN'),
     paymentMethod: z.enum(['CASH', 'CARD_EXTERNAL', 'LATER_PAY']).optional(), // Required for QUICK_SALE
     customerName: z.string().optional(),
     customerPhone: z.string().optional(),
+    customerId: z.string().optional(),
     scheduledAt: z.coerce.date().optional(),
+    pointsToRedeem: z.number().int().min(0).optional().default(0),
     items: z
         .array(
             z.object({
                 menuItemId: z.string(),
                 quantity: z.number().int().positive(),
                 notes: z.string().optional(),
+                selectedModifiers: z.array(z.object({
+                    modifierId: z.string(),
+                    name: z.string(),
+                    priceAdjustment: z.number()
+                })).optional()
             })
         )
         .min(1, 'Order must have at least one item'),
@@ -36,13 +43,23 @@ export async function fireOrder(input: CreateOrderInput) {
     if (!result.success) {
         return { success: false, error: 'Invalid form data' };
     }
-    const { tableId, items, userId, orderType, paymentMethod, customerName, customerPhone, scheduledAt } = result.data;
+    const { tableId, items, userId, orderType, paymentMethod, customerName, customerPhone, customerId, scheduledAt, pointsToRedeem } = result.data;
 
     if (orderType === 'QUICK_SALE' && !paymentMethod) {
         return { success: false, error: 'Payment method required for Quick Sale' };
     }
 
     try {
+        // Fallback for online orders without explicit staff userId
+        let finalUserId: string;
+        if (userId) {
+            finalUserId = userId;
+        } else {
+            const ownerUser = await prisma.user.findFirst({ where: { role: 'OWNER' } });
+            if (!ownerUser) return { success: false, error: 'System configuration error: No owner user found for online checkout.' };
+            finalUserId = ownerUser.id;
+        }
+
         // Fetch data needed for pricing (parallel)
         const [menuItems, activePromotions] = await Promise.all([
             prisma.menuItem.findMany({
@@ -67,10 +84,20 @@ export async function fireOrder(input: CreateOrderInput) {
         const cartInput = items.map(i => ({
             menuItemId: i.menuItemId,
             quantity: i.quantity,
+            modifiersPrice: (i.selectedModifiers || []).reduce((sum, mod) => sum + mod.priceAdjustment, 0),
         }));
 
         // 2. Perform calculation
         const calculation = calculateCart(cartInput, menuItems, activePromotions);
+
+        let finalTotal = calculation.total;
+        let finalDiscount = calculation.discount;
+
+        if (pointsToRedeem && pointsToRedeem > 0) {
+            const pointsDiscountValue = pointsToRedeem * 0.10; // 10 points = $1.00
+            finalDiscount += pointsDiscountValue;
+            finalTotal = Math.max(0, finalTotal - pointsDiscountValue);
+        }
 
         // 3. Prepare DB Items
         // We need to map the calculated items back to the input notes/etc.
@@ -129,7 +156,14 @@ export async function fireOrder(input: CreateOrderInput) {
                     notes: match.notes,
                     frozenPrice: calcItem.frozenPrice, // Unit price from calc
                     status: orderType === 'QUICK_SALE' ? OrderItemStatus.READY : OrderItemStatus.PENDING,
-                    refunded: false
+                    refunded: false,
+                    modifiers: match.selectedModifiers?.length ? {
+                        create: match.selectedModifiers.map((mod: any) => ({
+                            modifierId: mod.modifierId,
+                            name: mod.name,
+                            price: mod.priceAdjustment
+                        }))
+                    } : undefined
                 });
 
                 match.quantity -= take;
@@ -143,31 +177,99 @@ export async function fireOrder(input: CreateOrderInput) {
 
         // Transaction (All or Nothing)
         const newOrder = await prisma.$transaction(async (tx) => {
+            const isInstantlyPaid = orderType === 'QUICK_SALE' && paymentMethod !== 'LATER_PAY';
+
             const order = await tx.order.create({
                 data: {
                     tableId: orderType === 'DINE_IN' ? tableId : null,
-                    createdById: userId,
-                    status: orderType === 'QUICK_SALE' ? OrderStatus.PAID : OrderStatus.OPEN,
+                    createdById: finalUserId,
+                    status: isInstantlyPaid ? OrderStatus.PAID : OrderStatus.OPEN,
                     orderType: orderType as OrderType,
-                    paymentMethod: orderType === 'QUICK_SALE' ? paymentMethod : null,
+                    paymentMethod: paymentMethod || null,
                     customerName: orderType === 'TAKEOUT' ? customerName : null,
                     customerPhone: orderType === 'TAKEOUT' ? customerPhone : null,
+                    customerId: customerId || null,
                     scheduledAt: scheduledAt || null,
                     subtotal: calculation.subtotal,
-                    discount: calculation.discount,
+                    discount: finalDiscount,
                     tax: calculation.tax,
-                    total: calculation.total,
+                    total: finalTotal,
+                    amountPaid: isInstantlyPaid ? finalTotal : 0,
                     items: { create: dbItems },
                 },
             });
+
+            // Write initial payment chunk if instantly paid
+            if (isInstantlyPaid && paymentMethod) {
+                await tx.payment.create({
+                    data: {
+                        orderId: order.id,
+                        amount: finalTotal,
+                        method: paymentMethod as PaymentMethod
+                    }
+                });
+
+                // Award points if customer attached
+                if (customerId) {
+                    const pointsToAward = Math.floor(finalTotal);
+                    const pointDelta = pointsToAward - (pointsToRedeem || 0);
+
+                    // We increment or decrement the net points
+                    if (pointDelta !== 0) {
+                        const cust = await tx.customer.findUnique({ where: { id: customerId } });
+                        if (cust) {
+                            const newBalance = Math.max(0, cust.pointsBalance + pointDelta);
+                            await tx.customer.update({
+                                where: { id: customerId },
+                                data: { pointsBalance: newBalance }
+                            });
+                        }
+                    }
+                }
+            } else if (customerId && pointsToRedeem && pointsToRedeem > 0) {
+                // If not instantly paid but points redeemed (like LATER_PAY Takeout), deduct points now!
+                // Awarding points happens when payment is recorded, but we deduct redeemed points now.
+                const cust = await tx.customer.findUnique({ where: { id: customerId } });
+                if (cust) {
+                    const newBalance = Math.max(0, cust.pointsBalance - pointsToRedeem);
+                    await tx.customer.update({
+                        where: { id: customerId },
+                        data: { pointsBalance: newBalance }
+                    });
+                }
+            }
+
+            // Handle Inventory Decrements
+            const aggregatedCounts: Record<string, number> = {};
+            for (const dbItem of dbItems) {
+                aggregatedCounts[dbItem.menuItemId] = (aggregatedCounts[dbItem.menuItemId] || 0) + dbItem.quantity;
+            }
+
+            for (const [mId, qty] of Object.entries(aggregatedCounts)) {
+                const menuItem = menuItems.find(m => m.id === mId);
+                if (menuItem?.trackStock) {
+                    const updated = await tx.menuItem.update({
+                        where: { id: mId },
+                        data: { stockQuantity: { decrement: qty } },
+                    });
+
+                    // Auto-disable if out of stock
+                    if (updated.stockQuantity <= 0) {
+                        await tx.menuItem.update({
+                            where: { id: mId },
+                            data: { isAvailable: false, stockQuantity: 0 },
+                        });
+                    }
+                }
+            }
 
             // Occupy table for dine-in orders
             if (orderType === 'DINE_IN' && tableId) {
                 await tx.table.update({
                     where: { id: tableId },
                     data: {
-                        status: TableStatus.OCCUPIED,
-                        currentOrderId: order.id,
+                        status: isInstantlyPaid ? TableStatus.VACANT : TableStatus.OCCUPIED,
+                        currentOrderId: isInstantlyPaid ? null : order.id,
                     },
                 });
             }
@@ -227,7 +329,10 @@ export async function bumpOrder(orderId: string) {
 
 export async function recordPayment(
     orderId: string,
-    method: 'CASH' | 'CARD_EXTERNAL' | 'LATER_PAY'
+    method: 'CASH' | 'CARD_EXTERNAL' | 'LATER_PAY',
+    amount?: number,
+    pointsToRedeem: number = 0,
+    customerId?: string
 ) {
     try {
         const order = await prisma.order.findUnique({
@@ -245,26 +350,85 @@ export async function recordPayment(
                     where: { id: orderId },
                     data: { paymentMethod: method },
                 });
-            } else {
-                // Mark order as paid
+                return;
+            }
+
+            let currentTotal = order.total;
+            let currentDiscount = order.discount;
+
+            let finalCustomerId = order.customerId;
+            if (customerId && customerId !== order.customerId) {
+                finalCustomerId = customerId;
                 await tx.order.update({
                     where: { id: orderId },
-                    data: {
-                        status: OrderStatus.PAID,
-                        paymentMethod: method,
-                    },
+                    data: { customerId: finalCustomerId }
                 });
+            }
 
-                // Free up the table (dine-in only)
-                if (order.tableId) {
-                    await tx.table.update({
-                        where: { id: order.tableId },
-                        data: {
-                            status: TableStatus.VACANT,
-                            currentOrderId: null,
-                        },
+            if (pointsToRedeem > 0 && finalCustomerId) {
+                const cust = await tx.customer.findUnique({ where: { id: finalCustomerId } });
+                if (cust && cust.pointsBalance >= pointsToRedeem) {
+                    const discountValue = pointsToRedeem * 0.1;
+                    currentTotal = Math.max(0, currentTotal - discountValue);
+                    currentDiscount += discountValue;
+
+                    await tx.customer.update({
+                        where: { id: finalCustomerId },
+                        data: { pointsBalance: { decrement: pointsToRedeem } }
+                    });
+
+                    await tx.order.update({
+                        where: { id: orderId },
+                        data: { total: currentTotal, discount: currentDiscount }
+                    });
+                } else {
+                    throw new Error("Insufficient points");
+                }
+            }
+
+            // Normal payment processing
+            const paymentAmount = amount !== undefined ? amount : (currentTotal - order.amountPaid);
+            const newAmountPaid = order.amountPaid + paymentAmount;
+            const isFullyPaid = newAmountPaid >= currentTotal;
+
+            // 1. Create the Payment record
+            await tx.payment.create({
+                data: {
+                    orderId,
+                    amount: paymentAmount,
+                    method
+                }
+            });
+
+            // 2. Update the Order
+            await tx.order.update({
+                where: { id: orderId },
+                data: {
+                    amountPaid: newAmountPaid,
+                    ...(isFullyPaid ? { status: OrderStatus.PAID, paymentMethod: method } : {})
+                }
+            });
+
+            // 3. Award points on fully paid order
+            if (isFullyPaid && finalCustomerId) {
+                const pointsToAward = Math.floor(currentTotal);
+                if (pointsToAward > 0) {
+                    await tx.customer.update({
+                        where: { id: finalCustomerId },
+                        data: { pointsBalance: { increment: pointsToAward } }
                     });
                 }
+            }
+
+            // 3. Free up the table (dine-in only) if fully paid
+            if (isFullyPaid && order.tableId) {
+                await tx.table.update({
+                    where: { id: order.tableId },
+                    data: {
+                        status: TableStatus.VACANT,
+                        currentOrderId: null,
+                    },
+                });
             }
         });
 
@@ -281,45 +445,10 @@ export async function recordPayment(
 
 export async function collectLaterPayment(
     orderId: string,
-    method: 'CASH' | 'CARD_EXTERNAL'
+    method: 'CASH' | 'CARD_EXTERNAL',
+    amount?: number
 ) {
-    try {
-        const order = await prisma.order.findUnique({
-            where: { id: orderId },
-        });
-
-        if (!order) {
-            return { success: false, error: 'Order not found' };
-        }
-
-        await prisma.$transaction(async (tx) => {
-            await tx.order.update({
-                where: { id: orderId },
-                data: {
-                    status: OrderStatus.PAID,
-                    paymentMethod: method,
-                },
-            });
-
-            // Free table if dine-in
-            if (order.tableId) {
-                await tx.table.update({
-                    where: { id: order.tableId },
-                    data: {
-                        status: TableStatus.VACANT,
-                        currentOrderId: null,
-                    },
-                });
-            }
-        });
-
-        revalidatePath('/(dashboard)/pos', 'page');
-        revalidatePath('/(dashboard)/serve', 'page');
-        return { success: true };
-    } catch (error) {
-        console.error('Failed to collect payment:', error);
-        return { success: false, error: 'Failed to collect payment' };
-    }
+    return recordPayment(orderId, method, amount);
 }
 
 // ─── Print Bill (changes table status) ───────────────────────
@@ -399,6 +528,11 @@ const addItemsSchema = z.object({
                 menuItemId: z.string(),
                 quantity: z.number().int().positive(),
                 notes: z.string().optional(),
+                selectedModifiers: z.array(z.object({
+                    modifierId: z.string(),
+                    name: z.string(),
+                    priceAdjustment: z.number()
+                })).optional()
             })
         )
         .min(1, 'Must add at least one item'),
@@ -416,7 +550,7 @@ export async function addItemsToOrder(input: AddItemsInput) {
     try {
         const existingOrder = await prisma.order.findUnique({
             where: { id: orderId },
-            include: { items: true },
+            include: { items: { include: { modifiers: true } } },
         });
 
         if (!existingOrder || existingOrder.status !== 'OPEN') {
@@ -444,13 +578,14 @@ export async function addItemsToOrder(input: AddItemsInput) {
         const existingCartItems = existingOrder.items.filter(i => i.status !== 'VOIDED').map(i => ({
             menuItemId: i.menuItemId,
             quantity: i.quantity,
-            // We lose notes here for calculation, but we won't change existing rows' notes
+            modifiersPrice: i.modifiers.reduce((sum: number, mod: any) => sum + Number(mod.price), 0),
         }));
 
         // 2. Map new items
         const newCartItems = items.map(i => ({
             menuItemId: i.menuItemId,
             quantity: i.quantity,
+            modifiersPrice: (i.selectedModifiers || []).reduce((sum, mod) => sum + mod.priceAdjustment, 0),
         }));
 
         const combinedPayload = [...existingCartItems, ...newCartItems];
@@ -529,12 +664,19 @@ export async function addItemsToOrder(input: AddItemsInput) {
                         notes: inputItem.notes,
                         frozenPrice: avgPrice,
                         status: OrderItemStatus.PENDING,
-                        orderId
+                        orderId,
+                        modifiers: inputItem.selectedModifiers?.length ? {
+                            create: inputItem.selectedModifiers.map((mod: any) => ({
+                                modifierId: mod.modifierId,
+                                name: mod.name,
+                                price: mod.priceAdjustment
+                            }))
+                        } : undefined
                     });
                 }
             }
 
-            await tx.orderItem.createMany({ data: newDbItems });
+            await Promise.all(newDbItems.map(data => tx.orderItem.create({ data })));
 
             // Update Totals
             await tx.order.update({

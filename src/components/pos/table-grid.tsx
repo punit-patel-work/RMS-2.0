@@ -24,9 +24,12 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
+  LayoutDashboard,
+  List,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/pricing';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   reserveTable,
   cancelReservation,
@@ -48,12 +51,22 @@ interface TableData {
   seats: number;
   status: 'VACANT' | 'OCCUPIED' | 'BILL_PRINTED';
   mergedIntoId?: string | null;
+  positionX: number;
+  positionY: number;
+  width: number;
+  height: number;
+  shape: string;
   mergedFrom?: { id: string; name: string }[];
   reservations?: ReservationData[];
   currentOrder?: {
     id: string;
     total: number;
-    items: Array<{ id: string }>;
+    amountPaid: number;
+    paymentMethod: string | null;
+    items: {
+      id: string;
+      status: 'PENDING' | 'READY' | 'SERVED' | 'VOIDED';
+    }[];
   } | null;
 }
 
@@ -190,8 +203,73 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 md:gap-4">
-        {visibleTables.map((table) => {
+      <Tabs defaultValue="floorplan" className="w-full">
+        <div className="flex justify-between items-center mb-4">
+          <TabsList>
+            <TabsTrigger value="floorplan" className="gap-2">
+              <LayoutDashboard className="w-4 h-4" />
+              Floor Plan
+            </TabsTrigger>
+            <TabsTrigger value="list" className="gap-2">
+              <List className="w-4 h-4" />
+              Grid View
+            </TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="floorplan" className="mt-0">
+          <div 
+            className="relative w-full h-[600px] bg-card border-none rounded-lg overflow-hidden touch-none overflow-x-auto shadow-sm"
+          >
+            {visibleTables.map((table, index) => {
+              const isUnpositioned = table.positionX === 0 && table.positionY === 0;
+              const px = isUnpositioned ? (index % 5) * 120 + 20 : table.positionX;
+              const py = isUnpositioned ? Math.floor(index / 5) * 120 + 20 : table.positionY;
+
+              const bgClass =
+                table.status === 'OCCUPIED' ? 'border-red-500 bg-red-50 text-red-900 shadow-md ring-1 ring-red-400' :
+                table.status === 'BILL_PRINTED' ? 'border-yellow-500 bg-yellow-50 text-yellow-900 shadow-md ring-1 ring-yellow-400' :
+                'border-emerald-500 text-emerald-950 dark:text-emerald-50 hover:bg-emerald-50 hover:shadow-md transition-all cursor-pointer ring-1 ring-emerald-400 shadow-sm';
+              
+              const upcomingWarning = getUpcomingWarning(table.reservations);
+
+              return (
+                <div
+                  key={table.id}
+                  onClick={() => router.push(`/pos/${table.id}`)}
+                  className={cn(
+                    "absolute flex flex-col items-center justify-center p-2 border-2 transition-transform active:scale-95 cursor-pointer backdrop-blur-sm",
+                    table.shape === 'ROUND' ? 'rounded-full' : 'rounded-md',
+                    bgClass,
+                    upcomingWarning && 'ring-2 ring-amber-400 ring-offset-2 animate-pulse'
+                  )}
+                  style={{
+                    left: `${px}px`,
+                    top: `${py}px`,
+                    width: `${table.width}px`,
+                    height: `${table.height}px`,
+                  }}
+                >
+                  <span className="font-bold text-lg pointer-events-none drop-shadow-sm">{table.name}</span>
+                  {table.currentOrder && (
+                     <span className="text-xs font-semibold mt-1">
+                       {formatCurrency(table.currentOrder.total)}
+                     </span>
+                  )}
+                  {table.mergedFrom && table.mergedFrom.length > 0 && (
+                    <Badge variant="secondary" className="absolute -bottom-2 text-[9px] pointer-events-none">
+                      +{table.mergedFrom.length}
+                    </Badge>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="list" className="mt-0">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 md:gap-4">
+            {visibleTables.map((table) => {
           const config = statusConfig[table.status] || statusConfig.VACANT;
           const hasMergedChildren = table.mergedFrom && table.mergedFrom.length > 0;
           const upcomingWarning = getUpcomingWarning(table.reservations);
@@ -351,7 +429,9 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
             </Card>
           );
         })}
-      </div>
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* ─── Reserve Dialog ──────────────────────────────── */}
       <Dialog open={reserveId !== null} onOpenChange={(o) => { if (!o) setReserveId(null); }}>

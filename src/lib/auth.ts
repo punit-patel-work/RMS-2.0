@@ -8,32 +8,43 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     ...authConfig,
     providers: [
         Credentials({
-            name: 'PIN',
+            name: 'Employee Login',
             credentials: {
+                employeeId: { label: 'Employee ID', type: 'text' },
                 pinCode: { label: 'PIN Code', type: 'password' },
             },
             async authorize(credentials) {
-                if (!credentials?.pinCode || typeof credentials.pinCode !== 'string') {
+                if (
+                    !credentials?.employeeId ||
+                    typeof credentials.employeeId !== 'string' ||
+                    !credentials?.pinCode ||
+                    typeof credentials.pinCode !== 'string'
+                ) {
                     return null;
                 }
 
-                // Find all active users and check PIN against each
-                const users = await prisma.user.findMany({
-                    where: { isActive: true },
+                // Find the specific active user by Employee ID
+                const user = await prisma.user.findUnique({
+                    where: { employeeId: credentials.employeeId },
                 });
 
-                for (const user of users) {
-                    const isValid = await bcrypt.compare(
-                        credentials.pinCode,
-                        user.pinCode
-                    );
-                    if (isValid) {
-                        return {
-                            id: user.id,
-                            name: user.name,
-                            role: user.role,
-                        };
-                    }
+                if (!user || (!user.isActive && user.role !== 'OWNER')) {
+                    // Only active users or the system owner can log in
+                    return null;
+                }
+
+                // Verify their PIN
+                const isValid = await bcrypt.compare(
+                    credentials.pinCode,
+                    user.pinCode
+                );
+
+                if (isValid) {
+                    return {
+                        id: user.id,
+                        name: user.name,
+                        role: user.role,
+                    };
                 }
 
                 return null;

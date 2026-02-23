@@ -1,57 +1,45 @@
-'use client';
+"use client";
 
-import { useState, useTransition, useEffect } from 'react';
-import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { toast } from 'sonner';
-import { Utensils, Delete } from 'lucide-react';
-
-const PIN_LENGTH = 4;
+import { useState, useTransition, useEffect, useRef } from "react";
+import { signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { toast } from "sonner";
+import { Utensils } from "lucide-react";
 
 export default function LoginPage() {
-  const [pin, setPin] = useState('');
+  const [employeeId, setEmployeeId] = useState("");
+  const [pin, setPin] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  const handleDigit = (digit: string) => {
-    if (pin.length < PIN_LENGTH) {
-      setPin((prev) => prev + digit);
-    }
-  };
-
-  const handleDelete = () => {
-    setPin((prev) => prev.slice(0, -1));
-  };
-
   const doSubmit = (currentPin: string) => {
+    if (!employeeId.trim()) {
+      toast.error("Please enter your Employee ID first");
+      setPin("");
+      return;
+    }
+
     startTransition(async () => {
-      const result = await signIn('credentials', {
+      const result = await signIn("credentials", {
+        employeeId: employeeId.trim(),
         pinCode: currentPin,
         redirect: false,
       });
 
       if (result?.error) {
-        toast.error('Invalid PIN. Please try again.');
-        setPin('');
+        toast.error("Invalid Employee ID or PIN. Please try again.");
+        setPin("");
       } else {
-        toast.success('Welcome!');
-        router.push('/pos');
+        toast.success("Welcome!");
+        router.push("/pos");
         router.refresh();
       }
     });
   };
-
-  // Auto-submit when 4 digits entered
-  useEffect(() => {
-    if (pin.length === PIN_LENGTH && !isPending) {
-      doSubmit(pin);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin]);
-
-  const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', ''];
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
@@ -64,66 +52,66 @@ export default function LoginPage() {
             RMS
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            Enter your 4-digit staff PIN
+            Enter your Employee ID and Password
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* PIN Display — 4 dots */}
-          <div className="flex justify-center gap-3">
-            {Array.from({ length: PIN_LENGTH }).map((_, i) => (
-              <div
-                key={i}
-                className={`w-4 h-4 rounded-full border-2 transition-all duration-200 ${
-                  i < pin.length
-                    ? 'bg-primary border-primary scale-110'
-                    : 'border-muted-foreground/30'
-                }`}
-              />
-            ))}
+          {/* Employee ID Input */}
+          <div className="space-y-2">
+            <Label
+              htmlFor="employeeId"
+              className="text-muted-foreground text-xs uppercase font-bold"
+            >
+              Employee ID
+            </Label>
+            <Input
+              id="employeeId"
+              name="employeeId-disable-autofill"
+              type="text"
+              autoComplete="new-password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="e.g. 101"
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value.replace(/\D/g, ""))}
+              className="text-center text-lg h-12"
+            />
           </div>
 
-          {/* Number Pad */}
-          <div className="grid grid-cols-3 gap-3">
-            {digits.map((digit, i) => {
-              if (digit === '' && i === 9) {
-                return <div key={`empty-${i}`} />;
-              }
-              if (digit === '' && i === 11) {
-                return (
-                  <Button
-                    key="delete"
-                    variant="outline"
-                    size="lg"
-                    className="h-16 text-lg"
-                    onClick={handleDelete}
-                    disabled={pin.length === 0 || isPending}
-                  >
-                    <Delete className="w-5 h-5" />
-                  </Button>
-                );
-              }
-              return (
-                <Button
-                  key={digit}
-                  variant="outline"
-                  size="lg"
-                  className="h-16 text-xl font-semibold hover:bg-primary/10 active:scale-95 transition-transform"
-                  onClick={() => handleDigit(digit)}
-                  disabled={isPending}
-                >
-                  {digit}
-                </Button>
-              );
-            })}
+          {/* Password Input */}
+          <div className="space-y-2">
+            <Label
+              htmlFor="password"
+              className="text-muted-foreground text-xs uppercase font-bold"
+            >
+              Password
+            </Label>
+            <Input
+              id="password"
+              name="password-disable-autofill"
+              type="password"
+              autoComplete="new-password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="Enter password"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+              className="text-center text-lg h-12"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  doSubmit(pin);
+                }
+              }}
+            />
           </div>
 
-          {/* Loading indicator */}
-          {isPending && (
-            <div className="flex items-center justify-center gap-2 text-muted-foreground">
-              <span className="w-4 h-4 border-2 border-muted-foreground/30 border-t-primary rounded-full animate-spin" />
-              <span>Signing in...</span>
-            </div>
-          )}
+          <Button
+            className="w-full h-12 text-lg"
+            onClick={() => doSubmit(pin)}
+            disabled={isPending || !employeeId || !pin}
+          >
+            {isPending ? "Signing in..." : "Login"}
+          </Button>
         </CardContent>
       </Card>
     </div>

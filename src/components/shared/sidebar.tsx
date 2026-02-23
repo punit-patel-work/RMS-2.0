@@ -1,6 +1,5 @@
 'use client';
 
-
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
@@ -19,7 +18,10 @@ import {
   ClipboardList,
   Users,
   Menu,
+  Clock,
+  Calendar,
   X,
+  FileClock
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -28,60 +30,94 @@ import { cn } from '@/lib/utils';
 import { useConnectionStatus } from '@/hooks/use-connection-status';
 
 const navItems = [
+  // Operations Group
   {
     label: 'POS',
     href: '/pos',
     icon: LayoutGrid,
     roles: ['OWNER', 'SUPERVISOR', 'FLOOR_STAFF'],
+    section: 'Operations'
   },
   {
     label: 'Kitchen',
     href: '/kds',
     icon: ChefHat,
     roles: ['OWNER', 'SUPERVISOR', 'FLOOR_STAFF', 'KITCHEN_STAFF'],
+    section: 'Operations'
   },
   {
     label: 'Serve',
     href: '/serve',
     icon: ConciergeBell,
     roles: ['OWNER', 'SUPERVISOR', 'FLOOR_STAFF'],
+    section: 'Operations'
   },
   {
     label: 'Orders',
     href: '/orders',
     icon: ClipboardList,
     roles: ['OWNER', 'SUPERVISOR', 'FLOOR_STAFF'],
+    section: 'Operations'
   },
+  
+  // Staff Group
+  {
+    label: 'Timeclock',
+    href: '/timeclock',
+    icon: Clock,
+    roles: ['OWNER', 'SUPERVISOR', 'FLOOR_STAFF', 'KITCHEN_STAFF'],
+    section: 'Staff'
+  },
+  {
+    label: 'Schedule',
+    href: '/schedule',
+    icon: Calendar,
+    roles: ['OWNER', 'SUPERVISOR', 'FLOOR_STAFF', 'KITCHEN_STAFF'],
+    section: 'Staff'
+  },
+
+  // Management Group (Admin)
   {
     label: 'Menu',
     href: '/admin/menu',
     icon: UtensilsCrossed,
     roles: ['OWNER', 'SUPERVISOR'],
-    section: 'Admin',
+    section: 'Management'
   },
   {
     label: 'Promotions',
     href: '/admin/promotions',
     icon: Tag,
     roles: ['OWNER', 'SUPERVISOR'],
+    section: 'Management'
   },
   {
     label: 'Tables',
     href: '/admin/tables',
     icon: Settings,
     roles: ['OWNER', 'SUPERVISOR'],
-  },
-  {
-    label: 'Analytics',
-    href: '/admin/analytics',
-    icon: BarChart3,
-    roles: ['OWNER', 'SUPERVISOR'],
+    section: 'Management'
   },
   {
     label: 'Users',
     href: '/admin/users',
     icon: Users,
     roles: ['OWNER'],
+    section: 'Management'
+  },
+  {
+    label: 'Timesheets',
+    href: '/admin/timesheets',
+    icon: FileClock,
+    roles: ['OWNER', 'SUPERVISOR'],
+    section: 'Management'
+  },
+  {
+    label: 'Analytics',
+    href: '/admin/analytics',
+    icon: BarChart3,
+    roles: ['OWNER', 'SUPERVISOR'],
+    section: 'Management'
   },
 ];
 
@@ -97,8 +133,13 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
     item.roles.includes(userRole)
   );
 
-  const mainItems = visibleItems.filter((i) => !i.href.startsWith('/admin'));
-  const adminItems = visibleItems.filter((i) => i.href.startsWith('/admin'));
+  // Group items by section
+  const groupedItems = visibleItems.reduce((acc, item) => {
+    const section = item.section || 'General';
+    if (!acc[section]) acc[section] = [];
+    acc[section].push(item);
+    return acc;
+  }, {} as Record<string, typeof visibleItems>);
 
   const [counts, setCounts] = useState(initialCounts || { pending: 0, ready: 0 });
 
@@ -143,56 +184,20 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
       <Separator />
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 lg:p-3 space-y-0.5">
-        {mainItems.map((item) => {
-          const isActive = pathname.startsWith(item.href);
-          return (
-            <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)}>
-              <div
-                className={cn(
-                  'flex items-center gap-3 rounded-lg text-sm font-medium transition-colors',
-                  collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
-                  isActive
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                )}
-                title={collapsed ? item.label : undefined}
-              >
-                <div className="relative">
-                  <item.icon className="w-5 h-5 shrink-0" />
-                  {collapsed && getBadge(item.label) && (
-                    <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground font-bold">
-                      {getBadge(item.label)}
-                    </span>
-                  )}
-                </div>
-                {!collapsed && (
-                  <div className="flex-1 flex justify-between items-center">
-                    <span>{item.label}</span>
-                    {getBadge(item.label) && (
-                      <Badge variant="destructive" className="h-5 px-1.5 min-w-[1.25rem] flex items-center justify-center text-[10px]">
-                        {getBadge(item.label)}
-                      </Badge>
-                    )}
-                  </div>
-                )}
-              </div>
-            </Link>
-          );
-        })}
-
-        {adminItems.length > 0 && (
-          <>
-            <div className={cn('pt-3 pb-1', collapsed ? 'flex justify-center' : '')}>
+      <nav className="flex-1 p-2 lg:p-3 overflow-y-auto space-y-4">
+        {Object.entries(groupedItems).map(([section, items]) => (
+          <div key={section} className="space-y-1">
+            <div className={cn('pt-1 pb-1', collapsed ? 'flex justify-center' : '')}>
               {collapsed ? (
-                <Separator className="w-6" />
+                <Separator className="w-6 mt-2" />
               ) : (
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3">
-                  Admin
+                  {section}
                 </span>
               )}
             </div>
-            {adminItems.map((item) => {
+            
+            {items.map((item) => {
               const isActive = pathname.startsWith(item.href);
               return (
                 <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)}>
@@ -206,20 +211,36 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
                     )}
                     title={collapsed ? item.label : undefined}
                   >
-                    <item.icon className="w-5 h-5 shrink-0" />
-                    {!collapsed && item.label}
+                    <div className="relative">
+                      <item.icon className="w-5 h-5 shrink-0" />
+                      {collapsed && getBadge(item.label) && (
+                        <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground font-bold">
+                          {getBadge(item.label)}
+                        </span>
+                      )}
+                    </div>
+                    {!collapsed && (
+                      <div className="flex-1 flex justify-between items-center">
+                        <span>{item.label}</span>
+                        {getBadge(item.label) && (
+                          <Badge variant="destructive" className="h-5 px-1.5 min-w-[1.25rem] flex items-center justify-center text-[10px]">
+                            {getBadge(item.label)}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </Link>
               );
             })}
-          </>
-        )}
+          </div>
+        ))}
       </nav>
 
       <Separator />
 
       {/* User Info + Logout */}
-      <div className={cn('p-3 space-y-2', collapsed ? 'flex flex-col items-center' : '')}>
+      <div className={cn('p-3 space-y-2 shrink-0', collapsed ? 'flex flex-col items-center' : '')}>
         {!collapsed && (
           <div className="flex items-center gap-3 px-3">
             <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
@@ -229,8 +250,8 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
               <p className="text-sm font-medium truncate">
                 {session?.user?.name ?? 'Staff'}
               </p>
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                {userRole}
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 mx-0 mt-1 max-w-full truncate block bg-slate-200/50">
+                {userRole.replace('_', ' ')}
               </Badge>
             </div>
           </div>

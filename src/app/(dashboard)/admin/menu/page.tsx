@@ -1,12 +1,13 @@
-import { getAllMenuItems, getAllCategories } from '@/server/queries/menu.queries';
+import { getAllMenuItems, getAllCategories, getAllStations } from '@/server/queries/menu.queries';
 import { MenuManager } from '@/components/admin/menu-manager';
 
 export const dynamic = 'force-dynamic';
 
 export default async function MenuPage() {
-  const [items, categories] = await Promise.all([
+  const [items, categories, stations] = await Promise.all([
     getAllMenuItems(),
     getAllCategories(),
+    getAllStations(),
   ]);
 
   return (
@@ -20,6 +21,7 @@ export default async function MenuPage() {
       <MenuManager
         items={JSON.parse(JSON.stringify(items))}
         categories={JSON.parse(JSON.stringify(categories))}
+        stations={JSON.parse(JSON.stringify(stations))}
       />
     </div>
   );

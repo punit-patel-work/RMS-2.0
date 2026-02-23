@@ -43,7 +43,9 @@ export function ServeBoard() {
   const [isPending, startTransition] = useTransition();
   const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
   const [paymentTotal, setPaymentTotal] = useState(0);
+  const [paymentAmountPaid, setPaymentAmountPaid] = useState(0);
   const [paymentCustomer, setPaymentCustomer] = useState('');
+  const [splitAmountStr, setSplitAmountStr] = useState('');
 
   const orders = data?.orders ?? [];
 
@@ -73,11 +75,32 @@ export function ServeBoard() {
 
   const handleCollectPayment = (method: 'CASH' | 'CARD_EXTERNAL') => {
     if (!paymentOrderId) return;
+    const remaining = paymentTotal - paymentAmountPaid;
+    let payAmt = remaining;
+
+    if (splitAmountStr) {
+      const parsed = parseFloat(splitAmountStr);
+      if (isNaN(parsed) || parsed <= 0) {
+        toast.error('Invalid payment amount');
+        return;
+      }
+      if (parsed > remaining) {
+        toast.error('Payment exceeds remaining balance');
+        return;
+      }
+      payAmt = parsed;
+    }
+
     startTransition(async () => {
-      const result = await collectLaterPayment(paymentOrderId, method);
+      const result = await collectLaterPayment(paymentOrderId, method, payAmt);
       if (result.success) {
-        toast.success('Payment collected ✓');
-        setPaymentOrderId(null);
+        toast.success(`Collected ${formatCurrency(payAmt)} ✓`);
+        if (payAmt >= remaining) {
+          setPaymentOrderId(null);
+        } else {
+          setPaymentAmountPaid(prev => prev + payAmt);
+          setSplitAmountStr('');
+        }
         mutate();
       } else {
         toast.error(result.error);
@@ -244,7 +267,9 @@ export function ServeBoard() {
                         onClick={() => {
                           setPaymentOrderId(order.id);
                           setPaymentTotal(order.total);
-                          setPaymentCustomer(order.customerName || 'Customer');
+                          setPaymentAmountPaid(order.amountPaid || 0);
+                          setPaymentCustomer(label);
+                          setSplitAmountStr('');
                         }}
                         disabled={isPending}
                       >
@@ -269,10 +294,42 @@ export function ServeBoard() {
           <DialogHeader>
             <DialogTitle>Collect Payment — {paymentCustomer}</DialogTitle>
           </DialogHeader>
-          <div className="py-4 text-center">
-            <p className="text-3xl font-bold">{formatCurrency(paymentTotal)}</p>
-            <p className="text-sm text-red-500 mt-2 font-medium">
-              ⚠️ Payment must be collected before handover
+          <div className="py-4 space-y-4 text-center">
+            <div className="flex justify-between text-sm px-4">
+              <span className="text-muted-foreground">Order Total:</span>
+              <span className="font-semibold">{formatCurrency(paymentTotal)}</span>
+            </div>
+            {paymentAmountPaid > 0 && (
+              <div className="flex justify-between text-sm px-4 text-emerald-600">
+                <span>Amount Paid:</span>
+                <span className="font-semibold">-{formatCurrency(paymentAmountPaid)}</span>
+              </div>
+            )}
+            <Separator />
+            <div className="flex justify-between text-lg px-4 font-bold">
+              <span>Remaining:</span>
+              <span>{formatCurrency(paymentTotal - paymentAmountPaid)}</span>
+            </div>
+            
+            <div className="px-4 text-left">
+              <label className="text-sm font-semibold mb-1 block">Custom Amount (Split Check)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 text-muted-foreground">$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  max={paymentTotal - paymentAmountPaid}
+                  placeholder="Leave empty to pay full remaining"
+                  value={splitAmountStr}
+                  onChange={(e) => setSplitAmountStr(e.target.value)}
+                  className="w-full pl-7 pr-3 py-2 border rounded-md"
+                />
+              </div>
+            </div>
+
+            <p className="text-sm text-amber-600 mt-2 font-medium">
+              ⚠️ Order will remain open until fully paid
             </p>
           </div>
           <DialogFooter className="flex gap-3 sm:justify-center">

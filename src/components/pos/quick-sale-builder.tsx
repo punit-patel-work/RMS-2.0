@@ -10,6 +10,13 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import {
   ArrowLeft,
   Plus,
   Minus,
@@ -18,14 +25,18 @@ import {
   CreditCard,
   Search,
   Check,
-  Zap
+  Zap,
+  UserPlus,
+  Gift,
 } from 'lucide-react';
 import { useCartStore } from '@/stores/cart-store';
 import { fireOrder } from '@/server/actions/order.actions';
+import { verifyCustomer, registerCustomer } from '@/server/actions/crm.actions';
 import { formatCurrency } from '@/lib/pricing';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { Promotion, MenuItem, Category } from '@/generated/prisma/client';
+import { ModifierSelector } from '@/components/pos/modifier-selector';
 
 type CategoryWithItems = Category & {
   items: MenuItem[];
@@ -45,7 +56,21 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
   );
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD_EXTERNAL'>('CASH');
   const [menuSearch, setMenuSearch] = useState('');
+  const [modifyingItem, setModifyingItem] = useState<any | null>(null);
+
+  // CRM / Loyalty State
+  const [loyaltyOpen, setLoyaltyOpen] = useState(false);
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerData, setCustomerData] = useState<any>(null);
+  const [customerNameInput, setCustomerNameInput] = useState('');
+  const [loyaltyStatus, setLoyaltyStatus] = useState<'idle' | 'loading' | 'found' | 'not_found' | 'registering'>('idle');
+  const [usePoints, setUsePoints] = useState(false);
+
   const cart = useCartStore();
+
+  const maxRedeemablePoints = customerData ? Math.min(customerData.pointsBalance, Math.ceil(cart.total / 0.1)) : 0;
+  const pointsToRedeem = usePoints ? maxRedeemablePoints : 0;
+  const displayTotal = Math.max(0, cart.total - (pointsToRedeem * 0.1));
 
   // Set promotions on mount and reset cart
   useEffect(() => {
@@ -72,11 +97,13 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
         orderType: 'QUICK_SALE',
         userId: (session?.user as any)?.id ?? '',
         paymentMethod: paymentMethod,
+        pointsToRedeem,
         items: cart.items.map((i) => ({
           menuItemId: i.menuItemId,
           quantity: i.quantity,
           notes: i.notes,
         })),
+        customerId: customerData?.id,
       });
 
       if (result.success) {
@@ -87,6 +114,32 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
         toast.error(result.error);
       }
     });
+  };
+
+  const handleSearchCustomer = async () => {
+    if (!customerPhone.trim() || customerPhone.length < 5) return;
+    setLoyaltyStatus('loading');
+    const res = await verifyCustomer(customerPhone.trim());
+    if (res.success) {
+      setCustomerData(res.customer);
+      setLoyaltyStatus('found');
+    } else {
+      setCustomerData(null);
+      setLoyaltyStatus('not_found');
+    }
+  };
+
+  const handleRegisterCustomer = async () => {
+    setLoyaltyStatus('registering');
+    const res = await registerCustomer(customerPhone.trim(), customerNameInput.trim() || undefined);
+    if (res.success) {
+      setCustomerData(res.customer);
+      setLoyaltyStatus('found');
+      toast.success('Customer registered!');
+    } else {
+      setLoyaltyStatus('not_found');
+      toast.error(res.error);
+    }
   };
 
   return (
@@ -160,7 +213,13 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
               <Card
                 key={item.id}
                 className="cursor-pointer hover:bg-muted/50 transition-colors active:scale-95 border-border/60 shadow-sm"
-                onClick={() => cart.addItem(item)}
+                onClick={() => {
+                  if ((item as any).modifierGroups && (item as any).modifierGroups.length > 0) {
+                    setModifyingItem(item);
+                  } else {
+                    cart.addItem(item);
+                  }
+                }}
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex justify-between items-start gap-2">
@@ -207,7 +266,7 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
           ) : (
             <div className="space-y-3">
               {cart.items.map((item) => (
-                <div key={item.menuItemId} className="flex gap-2 bg-background p-3 rounded-lg border border-border shadow-sm">
+                <div key={item.id} className="flex gap-2 bg-background p-3 rounded-lg border border-border shadow-sm">
                    <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start">
                           <span className="font-medium text-sm truncate">{item.name}</span>
@@ -215,21 +274,26 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
                               {formatCurrency(item.effectivePrice * item.quantity)}
                           </span>
                       </div>
+                      {item.selectedModifiers && item.selectedModifiers.length > 0 && (
+                        <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-1">
+                          {item.selectedModifiers.map(m => m.name).join(', ')}
+                        </p>
+                      )}
                       <div className="flex items-center gap-2 mt-1">
                           <div className="flex items-center border rounded-md bg-muted/50 h-7">
                               <button 
                                 className="px-2 hover:bg-muted text-lg leading-none h-full flex items-center"
-                                onClick={() => cart.updateQuantity(item.menuItemId, -1)}
+                                onClick={() => cart.updateQuantity(item.id, -1)}
                               >−</button>
                               <span className="px-1 text-sm font-medium min-w-[1.2rem] text-center">{item.quantity}</span>
                               <button 
                                 className="px-2 hover:bg-muted text-lg leading-none h-full flex items-center"
-                                onClick={() => cart.updateQuantity(item.menuItemId, 1)}
+                                onClick={() => cart.updateQuantity(item.id, 1)}
                               >+</button>
                           </div>
                           <button 
                              className="ml-auto text-destructive hover:bg-destructive/10 p-1 rounded"
-                             onClick={() => cart.removeItem(item.menuItemId)}
+                             onClick={() => cart.removeItem(item.id)}
                           >
                              <Trash2 className="w-4 h-4" />
                           </button>
@@ -243,6 +307,29 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
 
         {/* Payment Section */}
         <div className="border-t border-border p-4 bg-background space-y-3">
+           {/* Loyalty Button */}
+           <Button
+             variant={customerData ? 'secondary' : 'outline'}
+             className="w-full justify-between h-12"
+             onClick={() => setLoyaltyOpen(true)}
+           >
+             <div className="flex items-center gap-2">
+               <UserPlus className="w-4 h-4" />
+               {customerData ? (
+                 <span className="font-semibold text-blue-600">{customerData.name || customerData.phone}</span>
+               ) : (
+                 <span>Attach Customer / Loyalty</span>
+               )}
+             </div>
+             {customerData && (
+               <Badge variant="outline" className="bg-blue-100 text-blue-800">
+                 {customerData.pointsBalance} pts
+               </Badge>
+             )}
+           </Button>
+
+           <Separator />
+
            {/* Totals */}
            <div className="space-y-1 pb-2">
              <div className="flex justify-between text-sm text-muted-foreground">
@@ -259,11 +346,17 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
                <span>Tax (7%)</span>
                <span>{formatCurrency(cart.tax)}</span>
              </div>
+             {pointsToRedeem > 0 && (
+               <div className="flex justify-between text-sm text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded mt-1">
+                 <span>Points ({pointsToRedeem})</span>
+                 <span>-{formatCurrency(pointsToRedeem * 0.1)}</span>
+               </div>
+             )}
            </div>
            
            <div className="flex justify-between text-xl font-bold border-t border-border pt-2">
              <span>Total</span>
-             <span>{formatCurrency(cart.total)}</span>
+             <span>{formatCurrency(displayTotal)}</span>
            </div>
 
            {/* Payment Method Selector */}
@@ -309,6 +402,90 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
            </Button>
         </div>
       </div>
+
+      <ModifierSelector
+        item={modifyingItem}
+        modifierGroups={modifyingItem?.modifierGroups || []}
+        onCancel={() => setModifyingItem(null)}
+        onConfirm={(itemToCart, mods) => {
+          cart.addItem(itemToCart, mods);
+          setModifyingItem(null);
+        }}
+      />
+
+      {/* Loyalty / Customer Dialog */}
+      <Dialog open={loyaltyOpen} onOpenChange={setLoyaltyOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Customer Loyalty</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">Phone Number</label>
+              <div className="flex gap-2">
+                <Input
+                  type="tel"
+                  placeholder="e.g. 555-1234"
+                  value={customerPhone}
+                  onChange={(e) => {
+                    setCustomerPhone(e.target.value);
+                    setLoyaltyStatus('idle');
+                  }}
+                />
+                <Button onClick={handleSearchCustomer} disabled={loyaltyStatus === 'loading' || !customerPhone.trim()}>
+                  {loyaltyStatus === 'loading' ? '...' : <Search className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+
+            {(loyaltyStatus === 'not_found' || loyaltyStatus === 'registering') && (
+              <div className="p-4 bg-muted/50 rounded-lg space-y-3">
+                <p className="text-sm font-medium">Customer not found. Create new?</p>
+                <Input
+                  placeholder="Customer Name (Optional)"
+                  value={customerNameInput}
+                  onChange={(e) => setCustomerNameInput(e.target.value)}
+                />
+                <Button onClick={handleRegisterCustomer} className="w-full" disabled={loyaltyStatus === 'registering'}>
+                  {loyaltyStatus === 'registering' ? 'Registering...' : 'Register Customer'}
+                </Button>
+              </div>
+            )}
+
+            {loyaltyStatus === 'found' && customerData && (
+              <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-lg text-center space-y-2">
+                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <Gift className="w-6 h-6" />
+                </div>
+                <p className="font-semibold text-lg">{customerData.name || customerData.phone}</p>
+                <div className="inline-block bg-white px-3 py-1 rounded-full shadow-sm border text-sm font-bold text-blue-600">
+                  {customerData.pointsBalance} Points Available
+                </div>
+                {customerData.pointsBalance > 0 && maxRedeemablePoints > 0 && (
+                   <Button 
+                      variant={usePoints ? "default" : "outline"}
+                      className="w-full mt-4"
+                      onClick={() => setUsePoints(!usePoints)}
+                   >
+                       {usePoints ? "Remove Point Redemption" : `Redeem ${maxRedeemablePoints} points for -${formatCurrency(maxRedeemablePoints * 0.1)}`}
+                   </Button>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            {loyaltyStatus === 'found' ? (
+              <Button onClick={() => setLoyaltyOpen(false)} className="w-full bg-blue-600 hover:bg-blue-700">
+                Attach to Sale
+              </Button>
+            ) : (
+              <Button onClick={() => setLoyaltyOpen(false)} variant="ghost" className="w-full">
+                Close
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

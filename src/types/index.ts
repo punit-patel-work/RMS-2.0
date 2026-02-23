@@ -34,10 +34,29 @@ export const menuItemSchema = z.object({
     basePrice: z.number().positive('Price must be positive'),
     categoryId: z.string().min(1, 'Category is required'),
     isAvailable: z.boolean().default(true),
+    trackStock: z.boolean().default(false),
+    stockQuantity: z.number().int().min(0).default(0),
     imageUrl: z.string().url().optional().or(z.literal('')),
 });
 
 export type MenuItemInput = z.infer<typeof menuItemSchema>;
+
+export const modifierSchema = z.object({
+    id: z.string().optional(),
+    name: z.string().min(1, 'Name is required'),
+    priceAdjustment: z.number().min(0, 'Price adjustment must be 0 or positive'),
+});
+
+export const modifierGroupSchema = z.object({
+    id: z.string().optional(),
+    name: z.string().min(1, 'Group name is required'),
+    isRequired: z.boolean().default(false),
+    maxChoices: z.number().nullable().optional(),
+    modifiers: z.array(modifierSchema),
+});
+
+export type ModifierGroupInput = z.infer<typeof modifierGroupSchema>;
+export type ModifierInput = z.infer<typeof modifierSchema>;
 
 export const promotionSchema = z.object({
     name: z.string().min(1, 'Promotion name is required'),
@@ -64,6 +83,7 @@ export type PromotionInput = z.infer<typeof promotionSchema>;
 // ─── Cart Types (Client-side) ────────────────────────────────
 
 export interface CartItem {
+    id: string; // Unique configuration ID
     menuItemId: string;
     name: string;
     categoryId: string;
@@ -72,6 +92,11 @@ export interface CartItem {
     effectivePrice: number;
     discount: number;
     notes?: string;
+    selectedModifiers?: {
+        modifierId: string;
+        name: string;
+        priceAdjustment: number
+    }[];
 }
 
 export interface ActivePromotion {
