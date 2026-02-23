@@ -3,6 +3,7 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { TableStatus } from '@/generated/prisma/client';
+import { auth } from '@/lib/auth';
 
 export async function updateTableStatus(
     tableId: string,
@@ -76,12 +77,20 @@ export async function deleteTable(tableId: string) {
 
 export async function reserveTable(params: {
     tableId: string;
-    userId: string;
     guestName: string;
     reservedAt: Date;
     reservedUntil: Date;
 }) {
     try {
+        const session = await auth();
+        console.log("RESERVE TABLE SESSION PAYLOAD:", JSON.stringify(session, null, 2));
+        const userId = (session?.user as any)?.id;
+        console.log("RESERVE TABLE EXTRACTED USER ID:", userId);
+
+        if (!userId) {
+            return { success: false, error: 'Unauthorized: User ID missing' };
+        }
+
         const table = await prisma.table.findUnique({
             where: { id: params.tableId },
         });
@@ -109,7 +118,7 @@ export async function reserveTable(params: {
         await prisma.reservation.create({
             data: {
                 tableId: params.tableId,
-                createdById: params.userId,
+                createdById: userId,
                 guestName: params.guestName,
                 reservedAt: params.reservedAt,
                 reservedUntil: params.reservedUntil,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -114,6 +114,17 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
   const userId = (session?.user as any)?.id ?? "";
   const [isPending, startTransition] = useTransition();
 
+  // Auto-refresh the page data every 10 seconds to sync POS across devices
+  useEffect(() => {
+    const interval = setInterval(() => {
+      startTransition(() => {
+        router.refresh();
+      });
+    }, 10000); // 10 seconds
+
+    return () => clearInterval(interval);
+  }, [router]);
+
   // Reserve dialog
   const [reserveId, setReserveId] = useState<string | null>(null);
   const [guestName, setGuestName] = useState("");
@@ -152,7 +163,6 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
     startTransition(async () => {
       const result = await reserveTable({
         tableId: reserveId,
-        userId,
         guestName: guestName.trim(),
         reservedAt: startDt,
         reservedUntil: endDt,
