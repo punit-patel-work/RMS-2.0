@@ -8,7 +8,6 @@ export default async function POSLayout({
 }) {
   const session = await auth();
 
-  // @ts-expect-error NextAuth types don't include custom role field by default
   if (session?.user?.role === 'KITCHEN_STAFF') {
     redirect('/kds');
   }
