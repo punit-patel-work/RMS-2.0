@@ -12,7 +12,7 @@ export default async function SchedulePage() {
     redirect('/login');
   }
 
-  const { role, id } = session.user as any;
+  const { role, id } = session.user;
 
   return <ScheduleView userRole={role} currentUserId={id} />;
 }

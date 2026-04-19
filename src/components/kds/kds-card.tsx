@@ -78,6 +78,7 @@ export function KdsCard({ order }: { order: KdsOrder }) {
     startTransition(async () => {
       const result = await bumpItem(itemId);
       if (result.success) {
+        toast.success('Item ready ✓');
         refresh();
       } else {
         toast.error('Failed to bump item');

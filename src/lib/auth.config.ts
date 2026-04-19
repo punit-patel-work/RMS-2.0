@@ -29,17 +29,17 @@ export const authConfig = {
         },
         jwt({ token, user }) {
             if (user) {
-                token.id = user.id;
-                token.role = (user as any).role;
+                token.sub = user.id;  // Force sub to DB id (NextAuth uses sub internally)
+                token.role = user.role;
                 token.name = user.name;
             }
             return token;
         },
         session({ session, token }) {
             if (session.user) {
-                session.user.id = (token.sub || token.id) as string;
-                (session.user as any).role = token.role;
-                session.user.name = token.name;
+                session.user.id = token.sub as string;
+                session.user.role = token.role;
+                session.user.name = token.name ?? null;
             }
             return session;
         },

@@ -61,7 +61,7 @@ export async function fireOrder(input: CreateOrderInput) {
         }
 
         // Fetch data needed for pricing (parallel)
-        const [menuItems, activePromotions] = await Promise.all([
+        const [menuItems, activePromotions, settings] = await Promise.all([
             prisma.menuItem.findMany({
                 where: { id: { in: items.map((i) => i.menuItemId) } },
                 include: { category: true },
@@ -76,6 +76,9 @@ export async function fireOrder(input: CreateOrderInput) {
                         },
                     },
                 },
+            }),
+            prisma.siteSettings.findMany({
+                where: { key: 'LOYALTY_POINTS_RATE' }
             }),
         ]);
 
@@ -94,7 +97,11 @@ export async function fireOrder(input: CreateOrderInput) {
         let finalDiscount = calculation.discount;
 
         if (pointsToRedeem && pointsToRedeem > 0) {
-            const pointsDiscountValue = pointsToRedeem * 0.10; // 10 points = $1.00
+            let loyaltyRate = 0.10; // Default fallback
+            if (settings && settings.length > 0) {
+                loyaltyRate = parseFloat(settings[0].value) || 0.10;
+            }
+            const pointsDiscountValue = pointsToRedeem * loyaltyRate;
             finalDiscount += pointsDiscountValue;
             finalTotal = Math.max(0, finalTotal - pointsDiscountValue);
         }
@@ -367,8 +374,14 @@ export async function recordPayment(
 
             if (pointsToRedeem > 0 && finalCustomerId) {
                 const cust = await tx.customer.findUnique({ where: { id: finalCustomerId } });
+                const settings = await tx.siteSettings.findUnique({ where: { key: 'LOYALTY_POINTS_RATE' } });
+                let loyaltyRate = 0.10;
+                if (settings) {
+                    loyaltyRate = parseFloat(settings.value) || 0.10;
+                }
+
                 if (cust && cust.pointsBalance >= pointsToRedeem) {
-                    const discountValue = pointsToRedeem * 0.1;
+                    const discountValue = pointsToRedeem * loyaltyRate;
                     currentTotal = Math.max(0, currentTotal - discountValue);
                     currentDiscount += discountValue;
 

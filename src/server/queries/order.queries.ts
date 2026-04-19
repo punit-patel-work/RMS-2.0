@@ -34,7 +34,7 @@ export async function getOrders(filters: OrderFilters) {
         ];
     }
 
-    return prisma.order.findMany({
+    const orders = await prisma.order.findMany({
         where,
         include: {
             table: { select: { name: true } },
@@ -51,4 +51,16 @@ export async function getOrders(filters: OrderFilters) {
         orderBy: { createdAt: 'desc' },
         take: 200,
     });
+
+    // Convert Decimal fields to plain numbers for Client Component serialization
+    return orders.map(order => ({
+        ...order,
+        items: order.items.map(item => ({
+            ...item,
+            modifiers: item.modifiers.map(mod => ({
+                ...mod,
+                price: Number(mod.price),
+            })),
+        })),
+    }));
 }

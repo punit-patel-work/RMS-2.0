@@ -35,12 +35,16 @@ import {
   Clock,
   Calendar,
   Zap,
+  AlertTriangle,
+  ClipboardList,
+  Printer,
 } from 'lucide-react';
 import { getOrders } from '@/server/queries/order.queries';
 import { refundOrder, voidOrder } from '@/server/actions/order.actions';
 import { formatCurrency } from '@/lib/pricing';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { ReceiptPreview } from './receipt-preview';
 
 const REFUND_REASONS = [
   'Customer dissatisfaction',
@@ -64,8 +68,8 @@ type OrderData = Awaited<ReturnType<typeof getOrders>>[number];
 
 export function OrderHistory() {
   const { data: session } = useSession();
-  const role = (session?.user as any)?.role;
-  const userId = (session?.user as any)?.id;
+  const role = session?.user?.role;
+  const userId = session?.user?.id;
   const canRefund = role === 'OWNER' || role === 'SUPERVISOR';
   const isFloorOnly = role === 'FLOOR_STAFF';
 
@@ -88,6 +92,12 @@ export function OrderHistory() {
   const [refundReason, setRefundReason] = useState('');
   const [refundNotes, setRefundNotes] = useState('');
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+
+  // Void confirmation
+  const [voidConfirmId, setVoidConfirmId] = useState<string | null>(null);
+
+  // Receipt preview
+  const [receiptOrder, setReceiptOrder] = useState<OrderData | null>(null);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -141,11 +151,13 @@ export function OrderHistory() {
     });
   };
 
-  const handleVoid = (orderId: string) => {
+  const handleVoid = () => {
+    if (!voidConfirmId) return;
     startTransition(async () => {
-      const result = await voidOrder(orderId);
+      const result = await voidOrder(voidConfirmId);
       if (result.success) {
         toast.success('Order voided');
+        setVoidConfirmId(null);
         fetchOrders();
       } else {
         toast.error(result.error);
@@ -243,9 +255,16 @@ export function OrderHistory() {
       {/* Results */}
       <div className="space-y-2">
         {loading ? (
-          <p className="text-center py-8 text-muted-foreground">Loading...</p>
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
+            <Clock className="w-10 h-10 animate-pulse text-muted-foreground/40" />
+            <p className="text-sm">Loading orders...</p>
+          </div>
         ) : orders.length === 0 ? (
-          <p className="text-center py-8 text-muted-foreground">No orders found</p>
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
+            <ClipboardList className="w-14 h-14 text-muted-foreground/30" />
+            <p className="text-lg font-medium">No orders found</p>
+            <p className="text-sm">Try adjusting your filters or date range.</p>
+          </div>
         ) : (
           orders.map((order) => {
             const isExpanded = expandedId === order.id;
@@ -406,12 +425,20 @@ export function OrderHistory() {
 
                       {/* Actions */}
                       <div className="flex gap-2 pt-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          onClick={() => setReceiptOrder(order)}
+                        >
+                          <Printer className="w-3.5 h-3.5" /> Receipt
+                        </Button>
                         {order.status === 'OPEN' && (
                           <Button
                             variant="outline"
                             size="sm"
                             className="gap-1 text-red-500 hover:text-red-600"
-                            onClick={() => handleVoid(order.id)}
+                            onClick={() => setVoidConfirmId(order.id)}
                             disabled={isPending}
                           >
                             <XCircle className="w-3.5 h-3.5" /> Void Order
@@ -559,6 +586,42 @@ export function OrderHistory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Void Confirmation Dialog */}
+      <Dialog
+        open={voidConfirmId !== null}
+        onOpenChange={(open) => { if (!open) setVoidConfirmId(null); }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-500">
+              <AlertTriangle className="w-5 h-5" />
+              Void Order?
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will permanently void this order and free the table. This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVoidConfirmId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleVoid}
+              disabled={isPending}
+            >
+              {isPending ? 'Voiding...' : 'Yes, Void Order'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Receipt Preview */}
+      <ReceiptPreview
+        order={receiptOrder}
+        onClose={() => setReceiptOrder(null)}
+      />
     </div>
   );
 }

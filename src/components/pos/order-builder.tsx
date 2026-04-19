@@ -17,6 +17,13 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
+import {
   ArrowLeft,
   Plus,
   Minus,
@@ -33,6 +40,7 @@ import {
   Search,
   UserPlus,
   Gift,
+  ShoppingBag,
 } from 'lucide-react';
 import { useCartStore } from '@/stores/cart-store';
 import {
@@ -162,7 +170,8 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
     (i) => i.status === 'PENDING' || i.status === 'READY'
   );
 
-  const maxRedeemablePoints = customerData && table.currentOrder ? Math.min(customerData.pointsBalance, Math.ceil((table.currentOrder.total - table.currentOrder.amountPaid) / 0.1)) : 0;
+  const targetTotal = table.currentOrder ? (table.currentOrder.total - table.currentOrder.amountPaid) : cart.total;
+  const maxRedeemablePoints = customerData ? Math.min(customerData.pointsBalance, Math.ceil(targetTotal / 0.1)) : 0;
   const pointsToRedeem = usePoints ? maxRedeemablePoints : 0;
 
   const handleFireOrder = () => {
@@ -175,7 +184,7 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
         tableId: table.id,
         userId: (session?.user as any)?.id ?? '',
         orderType: 'DINE_IN',
-        pointsToRedeem: 0,
+        pointsToRedeem,
         items: cart.items.map((i) => ({
           menuItemId: i.menuItemId,
           quantity: i.quantity,
@@ -337,6 +346,366 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
     }
   };
 
+
+  const renderCartPanel = (isMobileClassName?: string) => (
+    
+          <div className={cn("flex flex-col bg-card overflow-auto", isMobileClassName)}>
+            <div className="p-4 border-b border-border">
+              <h2 className="font-bold text-lg">
+                {hasExistingOrder ? 'Current Order' : 'New Order'}
+              </h2>
+            </div>
+    
+            {/* Existing Order Items with status + actions */}
+            {hasExistingOrder && table.currentOrder && (
+              <div className="p-4 border-b border-border bg-muted/20">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
+                  Fired Items
+                </h3>
+                <div className="space-y-2">
+                  {existingItems.map((item) => {
+                    const badge = statusBadge(item.status);
+                    return (
+                      <div
+                        key={item.id}
+                        className={cn(
+                          'flex items-center justify-between py-2 px-3 rounded-lg border',
+                          item.status === 'VOIDED' && 'opacity-40',
+                          item.status === 'SERVED' && 'bg-emerald-50 border-emerald-100',
+                          item.status === 'READY' && 'bg-blue-50 border-blue-100',
+                          item.status === 'PENDING' && 'bg-amber-50 border-amber-100',
+                        )}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={cn(
+                              'font-medium text-sm',
+                              item.status === 'VOIDED' && 'line-through'
+                            )}>
+                              {item.quantity}× {item.menuItem.name}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className={cn('text-[10px] px-1.5 py-0', badge.className)}
+                            >
+                              {badge.label}
+                            </Badge>
+                          </div>
+                          {item.notes && (
+                            <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" />
+                              {item.notes}
+                            </p>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {formatCurrency(item.frozenPrice * item.quantity)}
+                          </span>
+                        </div>
+    
+                        {/* Action buttons per status */}
+                        <div className="flex items-center gap-1 ml-2 shrink-0">
+                          {/* READY → Serve button for floor staff */}
+                          {item.status === 'READY' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-emerald-600 hover:bg-emerald-100"
+                              onClick={() => handleServeItem(item.id)}
+                              disabled={isPending}
+                              title="Mark as Served"
+                            >
+                              <ConciergeBell className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {/* Remove button (PENDING or READY only) */}
+                          {(item.status === 'PENDING' || item.status === 'READY') && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-red-500 hover:bg-red-100"
+                              onClick={() => handleRemoveItem(item.id)}
+                              disabled={isPending}
+                              title="Remove item"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {/* Served indicator */}
+                          {item.status === 'SERVED' && (
+                            <Check className="w-4 h-4 text-emerald-500" />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Separator className="my-3" />
+                <div className="flex justify-between font-semibold text-sm">
+                  <span>Order Total</span>
+                  <span>{formatCurrency(table.currentOrder.total)}</span>
+                </div>
+              </div>
+            )}
+    
+            {/* New Cart Items (for both new orders and add-ons) */}
+            <ScrollArea className="flex-1 p-4">
+              {cart.items.length === 0 ? (
+                <p className="text-center text-muted-foreground text-sm py-8">
+                  Tap menu items to add
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {hasExistingOrder && (
+                    <h3 className="text-xs font-semibold text-muted-foreground uppercase">
+                      New Items to Add
+                    </h3>
+                  )}
+                  {cart.items.map((item) => (
+                    <div key={item.id} className="space-y-1">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <p className="font-medium text-sm">{item.name}</p>
+                          {item.selectedModifiers && item.selectedModifiers.length > 0 && (
+                            <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-0.5">
+                              {item.selectedModifiers.map(m => m.name).join(', ')}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            {item.discount > 0 && (
+                              <>
+                                <span className="line-through">
+                                  {formatCurrency(item.basePrice)}
+                                </span>
+                                <span className="text-emerald-500">
+                                  {formatCurrency(item.effectivePrice)}
+                                </span>
+                              </>
+                            )}
+                            {item.discount === 0 && (
+                              <span>{formatCurrency(item.basePrice)}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() =>
+                              cart.updateQuantity(item.id, -1)
+                            }
+                          >
+                            <Minus className="w-3 h-3" />
+                          </Button>
+                          <span className="w-6 text-center text-sm font-semibold">
+                            {item.quantity}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => {
+                              const originalItem = currentItems.find((i) => i.id === item.menuItemId) || categories.flatMap(c => c.items).find(i => i.id === item.menuItemId);
+                              const maxQty = (originalItem && originalItem.trackStock) ? originalItem.stockQuantity : Infinity;
+                              if (item.quantity >= maxQty) {
+                                toast.error(`Maximum stock reached`);
+                                return;
+                              }
+                              cart.updateQuantity(item.id, 1);
+                            }}
+                          >
+                            <Plus className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive"
+                            onClick={() => cart.removeItem(item.id)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+    
+                      {/* Notes / Allergy input */}
+                      <div className="flex items-center gap-1">
+                        {item.notes ? (
+                          <button
+                            className="text-xs text-amber-600 flex items-center gap-1 hover:underline"
+                            onClick={() => {
+                              setNotesItemId(item.id);
+                              setNotesValue(item.notes || '');
+                            }}
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            {item.notes}
+                          </button>
+                        ) : (
+                          <button
+                            className="text-xs text-muted-foreground flex items-center gap-1 hover:text-foreground"
+                            onClick={() => {
+                              setNotesItemId(item.id);
+                              setNotesValue('');
+                            }}
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            Add note / allergy
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+    
+            {/* Cart Totals & Actions */}
+            <div className="border-t border-border p-4 space-y-3">
+              {cart.items.length > 0 && (
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Subtotal</span>
+                    <span>{formatCurrency(cart.subtotal)}</span>
+                  </div>
+                  {cart.discount > 0 && (
+                    <div className="flex justify-between text-emerald-500">
+                      <span>Discount</span>
+                      <span>-{formatCurrency(cart.discount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Tax (7%)</span>
+                    <span>{formatCurrency(cart.tax)}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between font-bold text-base">
+                    <span>Total</span>
+                    <span>{formatCurrency(cart.total)}</span>
+                  </div>
+                </div>
+              )}
+    
+              {/* Loyalty Section (Before Fire Order) */}
+              {!hasExistingOrder && (
+                <div className="mb-2">
+                  <Button
+                    variant={customerData ? 'secondary' : 'outline'}
+                    className="w-full justify-between h-12"
+                    onClick={() => setLoyaltyOpen(true)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="w-4 h-4" />
+                      {customerData ? (
+                        <span className="font-semibold text-blue-600">{customerData.name || customerData.phone}</span>
+                      ) : (
+                        <span>Attach Customer / Loyalty</span>
+                      )}
+                    </div>
+                    {customerData && (
+                      <Badge variant="outline" className="bg-blue-100 text-blue-800">
+                        {customerData.pointsBalance} pts
+                      </Badge>
+                    )}
+                  </Button>
+                </div>
+              )}
+    
+              {/* New order: Fire button */}
+              {!hasExistingOrder && (
+                <Button
+                  className="w-full h-14 text-lg font-bold bg-red-600 hover:bg-red-700 text-white"
+                  onClick={handleFireOrder}
+                  disabled={isPending || cart.items.length === 0}
+                >
+                  {isPending ? (
+                    <span className="flex items-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Sending...
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Flame className="w-5 h-5" />
+                      FIRE ORDER
+                    </span>
+                  )}
+                </Button>
+              )}
+    
+              {/* Existing order actions */}
+              {hasExistingOrder && (
+                <div className="space-y-2">
+                  {/* Add-on button (when cart has items) */}
+                  {cart.items.length > 0 && (
+                    <Button
+                      className="w-full h-12 text-base font-bold bg-orange-600 hover:bg-orange-700 text-white"
+                      onClick={handleAddToOrder}
+                      disabled={isPending}
+                    >
+                      {isPending ? (
+                        <span className="flex items-center gap-2">
+                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Adding...
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          <Plus className="w-5 h-5" />
+                          ADD TO ORDER
+                        </span>
+                      )}
+                    </Button>
+                  )}
+    
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      variant="outline"
+                      className="gap-2"
+                      onClick={handlePrintBill}
+                      disabled={isPending}
+                    >
+                      <FileText className="w-4 h-4" />
+                      Print Bill
+                    </Button>
+                    <Button
+                      className={cn(
+                        'gap-2',
+                        allItemsComplete
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-muted text-muted-foreground cursor-not-allowed'
+                      )}
+                      onClick={() => allItemsComplete && setPaymentOpen(true)}
+                      disabled={isPending || !allItemsComplete}
+                      title={
+                        !allItemsComplete
+                          ? 'All items must be served or voided before payment'
+                          : 'Record payment'
+                      }
+                    >
+                      <Banknote className="w-4 h-4" />
+                      Pay
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="col-span-2 gap-2"
+                      onClick={handleVoidOrder}
+                      disabled={isPending}
+                    >
+                      <XCircle className="w-4 h-4" />
+                      Void Order
+                    </Button>
+                  </div>
+    
+                  {/* Pay requirement hint */}
+                  {hasPendingOrReady && (
+                    <p className="text-xs text-muted-foreground text-center">
+                      All items must be served before payment
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+  );
+
   return (
     <div className="flex flex-col md:flex-row h-full overflow-hidden">
       {/* Left: Menu Browser */}
@@ -438,361 +807,30 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
         </div>
       </div>
 
-      {/* Right: Cart Panel */}
-      <div className="w-full md:w-80 lg:w-96 border-t md:border-t-0 md:border-l border-border flex flex-col bg-card max-h-[50vh] md:max-h-none overflow-auto">
-        <div className="p-4 border-b border-border">
-          <h2 className="font-bold text-lg">
-            {hasExistingOrder ? 'Current Order' : 'New Order'}
-          </h2>
-        </div>
+      {/* Right: Cart Panel (Desktop) */}
+      {renderCartPanel("hidden md:flex flex-col w-80 lg:w-96 border-l border-border h-full")}
 
-        {/* Existing Order Items with status + actions */}
-        {hasExistingOrder && table.currentOrder && (
-          <div className="p-4 border-b border-border bg-muted/20">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase mb-3">
-              Fired Items
-            </h3>
-            <div className="space-y-2">
-              {existingItems.map((item) => {
-                const badge = statusBadge(item.status);
-                return (
-                  <div
-                    key={item.id}
-                    className={cn(
-                      'flex items-center justify-between py-2 px-3 rounded-lg border',
-                      item.status === 'VOIDED' && 'opacity-40',
-                      item.status === 'SERVED' && 'bg-emerald-50 border-emerald-100',
-                      item.status === 'READY' && 'bg-blue-50 border-blue-100',
-                      item.status === 'PENDING' && 'bg-amber-50 border-amber-100',
-                    )}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={cn(
-                          'font-medium text-sm',
-                          item.status === 'VOIDED' && 'line-through'
-                        )}>
-                          {item.quantity}× {item.menuItem.name}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={cn('text-[10px] px-1.5 py-0', badge.className)}
-                        >
-                          {badge.label}
-                        </Badge>
-                      </div>
-                      {item.notes && (
-                        <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />
-                          {item.notes}
-                        </p>
-                      )}
-                      <span className="text-xs text-muted-foreground">
-                        {formatCurrency(item.frozenPrice * item.quantity)}
-                      </span>
-                    </div>
-
-                    {/* Action buttons per status */}
-                    <div className="flex items-center gap-1 ml-2 shrink-0">
-                      {/* READY → Serve button for floor staff */}
-                      {item.status === 'READY' && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-emerald-600 hover:bg-emerald-100"
-                          onClick={() => handleServeItem(item.id)}
-                          disabled={isPending}
-                          title="Mark as Served"
-                        >
-                          <ConciergeBell className="w-4 h-4" />
-                        </Button>
-                      )}
-                      {/* Remove button (PENDING or READY only) */}
-                      {(item.status === 'PENDING' || item.status === 'READY') && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-red-500 hover:bg-red-100"
-                          onClick={() => handleRemoveItem(item.id)}
-                          disabled={isPending}
-                          title="Remove item"
-                        >
-                          <XCircle className="w-4 h-4" />
-                        </Button>
-                      )}
-                      {/* Served indicator */}
-                      {item.status === 'SERVED' && (
-                        <Check className="w-4 h-4 text-emerald-500" />
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <Separator className="my-3" />
-            <div className="flex justify-between font-semibold text-sm">
-              <span>Order Total</span>
-              <span>{formatCurrency(table.currentOrder.total)}</span>
-            </div>
-          </div>
-        )}
-
-        {/* New Cart Items (for both new orders and add-ons) */}
-        <ScrollArea className="flex-1 p-4">
-          {cart.items.length === 0 ? (
-            <p className="text-center text-muted-foreground text-sm py-8">
-              Tap menu items to add
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {hasExistingOrder && (
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase">
-                  New Items to Add
-                </h3>
-              )}
-              {cart.items.map((item) => (
-                <div key={item.id} className="space-y-1">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <p className="font-medium text-sm">{item.name}</p>
-                      {item.selectedModifiers && item.selectedModifiers.length > 0 && (
-                        <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-0.5">
-                          {item.selectedModifiers.map(m => m.name).join(', ')}
-                        </p>
-                      )}
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        {item.discount > 0 && (
-                          <>
-                            <span className="line-through">
-                              {formatCurrency(item.basePrice)}
-                            </span>
-                            <span className="text-emerald-500">
-                              {formatCurrency(item.effectivePrice)}
-                            </span>
-                          </>
-                        )}
-                        {item.discount === 0 && (
-                          <span>{formatCurrency(item.basePrice)}</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() =>
-                          cart.updateQuantity(item.id, -1)
-                        }
-                      >
-                        <Minus className="w-3 h-3" />
-                      </Button>
-                      <span className="w-6 text-center text-sm font-semibold">
-                        {item.quantity}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => {
-                          const originalItem = currentItems.find((i) => i.id === item.menuItemId) || categories.flatMap(c => c.items).find(i => i.id === item.menuItemId);
-                          const maxQty = (originalItem && originalItem.trackStock) ? originalItem.stockQuantity : Infinity;
-                          if (item.quantity >= maxQty) {
-                            toast.error(`Maximum stock reached`);
-                            return;
-                          }
-                          cart.updateQuantity(item.id, 1);
-                        }}
-                      >
-                        <Plus className="w-3 h-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive"
-                        onClick={() => cart.removeItem(item.id)}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Notes / Allergy input */}
-                  <div className="flex items-center gap-1">
-                    {item.notes ? (
-                      <button
-                        className="text-xs text-amber-600 flex items-center gap-1 hover:underline"
-                        onClick={() => {
-                          setNotesItemId(item.id);
-                          setNotesValue(item.notes || '');
-                        }}
-                      >
-                        <MessageSquare className="w-3 h-3" />
-                        {item.notes}
-                      </button>
-                    ) : (
-                      <button
-                        className="text-xs text-muted-foreground flex items-center gap-1 hover:text-foreground"
-                        onClick={() => {
-                          setNotesItemId(item.id);
-                          setNotesValue('');
-                        }}
-                      >
-                        <MessageSquare className="w-3 h-3" />
-                        Add note / allergy
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-
-        {/* Cart Totals & Actions */}
-        <div className="border-t border-border p-4 space-y-3">
-          {cart.items.length > 0 && (
-            <div className="space-y-1 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span>{formatCurrency(cart.subtotal)}</span>
-              </div>
-              {cart.discount > 0 && (
-                <div className="flex justify-between text-emerald-500">
-                  <span>Discount</span>
-                  <span>-{formatCurrency(cart.discount)}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-muted-foreground">
-                <span>Tax (7%)</span>
-                <span>{formatCurrency(cart.tax)}</span>
-              </div>
-              <Separator />
-              <div className="flex justify-between font-bold text-base">
-                <span>Total</span>
-                <span>{formatCurrency(cart.total)}</span>
-              </div>
-            </div>
-          )}
-
-          {/* Loyalty Section (Before Fire Order) */}
-          {!hasExistingOrder && (
-            <div className="mb-2">
-              <Button
-                variant={customerData ? 'secondary' : 'outline'}
-                className="w-full justify-between h-12"
-                onClick={() => setLoyaltyOpen(true)}
-              >
-                <div className="flex items-center gap-2">
-                  <UserPlus className="w-4 h-4" />
-                  {customerData ? (
-                    <span className="font-semibold text-blue-600">{customerData.name || customerData.phone}</span>
-                  ) : (
-                    <span>Attach Customer / Loyalty</span>
-                  )}
-                </div>
-                {customerData && (
-                  <Badge variant="outline" className="bg-blue-100 text-blue-800">
-                    {customerData.pointsBalance} pts
-                  </Badge>
-                )}
-              </Button>
-            </div>
-          )}
-
-          {/* New order: Fire button */}
-          {!hasExistingOrder && (
-            <Button
-              className="w-full h-14 text-lg font-bold bg-red-600 hover:bg-red-700 text-white"
-              onClick={handleFireOrder}
-              disabled={isPending || cart.items.length === 0}
-            >
-              {isPending ? (
-                <span className="flex items-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Sending...
-                </span>
-              ) : (
-                <span className="flex items-center gap-2">
-                  <Flame className="w-5 h-5" />
-                  FIRE ORDER
-                </span>
-              )}
+      {/* Floating Sticky Bar (Mobile) */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-background border-t border-border shadow-[0_-4px_12px_rgba(0,0,0,0.1)] z-40">
+        <Sheet>
+          <SheetTrigger asChild>
+            <Button className="w-full h-14 text-lg font-bold flex justify-between items-center px-6 shadow-lg shadow-primary/20">
+              <span className="flex items-center gap-2">
+                 <ShoppingBag className="w-5 h-5" />
+                 {cart.items.length > 0 ? `${cart.items.length} items` : 'Empty Cart'}
+              </span>
+              <span>{formatCurrency(table.currentOrder ? table.currentOrder.total : cart.total)}</span>
             </Button>
-          )}
-
-          {/* Existing order actions */}
-          {hasExistingOrder && (
-            <div className="space-y-2">
-              {/* Add-on button (when cart has items) */}
-              {cart.items.length > 0 && (
-                <Button
-                  className="w-full h-12 text-base font-bold bg-orange-600 hover:bg-orange-700 text-white"
-                  onClick={handleAddToOrder}
-                  disabled={isPending}
-                >
-                  {isPending ? (
-                    <span className="flex items-center gap-2">
-                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Adding...
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <Plus className="w-5 h-5" />
-                      ADD TO ORDER
-                    </span>
-                  )}
-                </Button>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="outline"
-                  className="gap-2"
-                  onClick={handlePrintBill}
-                  disabled={isPending}
-                >
-                  <FileText className="w-4 h-4" />
-                  Print Bill
-                </Button>
-                <Button
-                  className={cn(
-                    'gap-2',
-                    allItemsComplete
-                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                      : 'bg-muted text-muted-foreground cursor-not-allowed'
-                  )}
-                  onClick={() => allItemsComplete && setPaymentOpen(true)}
-                  disabled={isPending || !allItemsComplete}
-                  title={
-                    !allItemsComplete
-                      ? 'All items must be served or voided before payment'
-                      : 'Record payment'
-                  }
-                >
-                  <Banknote className="w-4 h-4" />
-                  Pay
-                </Button>
-                <Button
-                  variant="destructive"
-                  className="col-span-2 gap-2"
-                  onClick={handleVoidOrder}
-                  disabled={isPending}
-                >
-                  <XCircle className="w-4 h-4" />
-                  Void Order
-                </Button>
-              </div>
-
-              {/* Pay requirement hint */}
-              {hasPendingOrReady && (
-                <p className="text-xs text-muted-foreground text-center">
-                  All items must be served before payment
-                </p>
-              )}
+          </SheetTrigger>
+          <SheetContent side="bottom" className="h-[90vh] p-0 flex flex-col pt-6 z-50">
+            <SheetHeader className="px-4 pb-2 border-b text-left shrink-0">
+              <SheetTitle>Your Order</SheetTitle>
+            </SheetHeader>
+            <div className="flex-1 overflow-hidden flex flex-col">
+               {renderCartPanel("flex flex-col h-full w-full border-none")}
             </div>
-          )}
-        </div>
+          </SheetContent>
+        </Sheet>
       </div>
 
       {/* Payment Dialog */}

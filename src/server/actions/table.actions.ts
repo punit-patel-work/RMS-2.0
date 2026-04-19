@@ -83,9 +83,7 @@ export async function reserveTable(params: {
 }) {
     try {
         const session = await auth();
-        console.log("RESERVE TABLE SESSION PAYLOAD:", JSON.stringify(session, null, 2));
-        const userId = (session?.user as any)?.id;
-        console.log("RESERVE TABLE EXTRACTED USER ID:", userId);
+        const userId = session?.user?.id;
 
         if (!userId) {
             return { success: false, error: 'Unauthorized: User ID missing' };

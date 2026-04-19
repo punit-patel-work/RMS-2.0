@@ -46,7 +46,19 @@ export async function GET() {
             ],
         });
 
-        return NextResponse.json({ orders });
+        // Convert Decimal fields to plain numbers for JSON serialization
+        const serialized = orders.map(order => ({
+            ...order,
+            items: order.items.map(item => ({
+                ...item,
+                modifiers: item.modifiers.map(mod => ({
+                    ...mod,
+                    price: Number(mod.price),
+                })),
+            })),
+        }));
+
+        return NextResponse.json({ orders: serialized });
     } catch (error) {
         console.error('KDS fetch error:', error);
         return NextResponse.json(

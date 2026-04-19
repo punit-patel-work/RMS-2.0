@@ -17,6 +17,13 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
+import {
   ArrowLeft,
   Plus,
   Minus,
@@ -28,6 +35,7 @@ import {
   Zap,
   UserPlus,
   Gift,
+  ShoppingBag,
 } from 'lucide-react';
 import { useCartStore } from '@/stores/cart-store';
 import { fireOrder } from '@/server/actions/order.actions';
@@ -142,6 +150,169 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
     }
   };
 
+
+  const renderCartPanel = (isMobileClassName?: string) => (
+    <div className={cn("flex flex-col bg-card overflow-auto shadow-xl z-20", isMobileClassName)}>
+            <div className="p-4 border-b border-border bg-background flex justify-between items-center">
+                <h2 className="font-bold text-lg">Current Sale</h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => cart.reset()}
+                  disabled={cart.items.length === 0}
+                >
+                  Clear
+                </Button>
+            </div>
+    
+            <ScrollArea className="flex-1 p-4 bg-muted/10">
+              {cart.items.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 md:h-full text-muted-foreground gap-2 opacity-50">
+                  <Zap className="w-12 h-12" />
+                  <p>No items added</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {cart.items.map((item) => (
+                    <div key={item.id} className="flex gap-2 bg-background p-3 rounded-lg border border-border shadow-sm">
+                       <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-start">
+                              <span className="font-medium text-sm truncate">{item.name}</span>
+                              <span className="font-semibold text-sm">
+                                  {formatCurrency(item.effectivePrice * item.quantity)}
+                              </span>
+                          </div>
+                          {item.selectedModifiers && item.selectedModifiers.length > 0 && (
+                            <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-1">
+                              {item.selectedModifiers.map(m => m.name).join(', ')}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2 mt-1">
+                              <div className="flex items-center border rounded-md bg-muted/50 h-7">
+                                  <button 
+                                    className="px-2 hover:bg-muted text-lg leading-none h-full flex items-center"
+                                    onClick={() => cart.updateQuantity(item.id, -1)}
+                                  >−</button>
+                                  <span className="px-1 text-sm font-medium min-w-[1.2rem] text-center">{item.quantity}</span>
+                                  <button 
+                                    className="px-2 hover:bg-muted text-lg leading-none h-full flex items-center"
+                                    onClick={() => cart.updateQuantity(item.id, 1)}
+                                  >+</button>
+                              </div>
+                              <button 
+                                 className="ml-auto text-destructive hover:bg-destructive/10 p-1 rounded"
+                                 onClick={() => cart.removeItem(item.id)}
+                              >
+                                 <Trash2 className="w-4 h-4" />
+                              </button>
+                          </div>
+                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+    
+            {/* Payment Section */}
+            <div className="border-t border-border p-4 bg-background space-y-3">
+               {/* Loyalty Button */}
+               <Button
+                 variant={customerData ? 'secondary' : 'outline'}
+                 className="w-full justify-between h-12"
+                 onClick={() => setLoyaltyOpen(true)}
+               >
+                 <div className="flex items-center gap-2">
+                   <UserPlus className="w-4 h-4" />
+                   {customerData ? (
+                     <span className="font-semibold text-blue-600">{customerData.name || customerData.phone}</span>
+                   ) : (
+                     <span>Attach Customer / Loyalty</span>
+                   )}
+                 </div>
+                 {customerData && (
+                   <Badge variant="outline" className="bg-blue-100 text-blue-800">
+                     {customerData.pointsBalance} pts
+                   </Badge>
+                 )}
+               </Button>
+    
+               <Separator />
+    
+               {/* Totals */}
+               <div className="space-y-1 pb-2">
+                 <div className="flex justify-between text-sm text-muted-foreground">
+                   <span>Subtotal</span>
+                   <span>{formatCurrency(cart.subtotal)}</span>
+                 </div>
+                 {cart.discount > 0 && (
+                   <div className="flex justify-between text-sm text-emerald-600">
+                     <span>Discount</span>
+                     <span>-{formatCurrency(cart.discount)}</span>
+                   </div>
+                 )}
+                 <div className="flex justify-between text-sm text-muted-foreground">
+                   <span>Tax (7%)</span>
+                   <span>{formatCurrency(cart.tax)}</span>
+                 </div>
+                 {pointsToRedeem > 0 && (
+                   <div className="flex justify-between text-sm text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded mt-1">
+                     <span>Points ({pointsToRedeem})</span>
+                     <span>-{formatCurrency(pointsToRedeem * 0.1)}</span>
+                   </div>
+                 )}
+               </div>
+               
+               <div className="flex justify-between text-xl font-bold border-t border-border pt-2">
+                 <span>Total</span>
+                 <span>{formatCurrency(displayTotal)}</span>
+               </div>
+    
+               {/* Payment Method Selector */}
+               <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
+                    className={cn(
+                        "h-10 border-2",
+                        paymentMethod === 'CASH' ? "border-emerald-600 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-100" : "hover:border-emerald-200"
+                    )}
+                    onClick={() => setPaymentMethod('CASH')}
+                  >
+                      <Banknote className="w-4 h-4 mr-2" />
+                      Cash
+                  </Button>
+                  <Button
+                    variant={paymentMethod === 'CARD_EXTERNAL' ? 'default' : 'outline'}
+                    className={cn(
+                        "h-10 border-2",
+                        paymentMethod === 'CARD_EXTERNAL' ? "border-purple-600 bg-purple-50 text-purple-900 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-100" : "hover:border-purple-200"
+                    )}
+                    onClick={() => setPaymentMethod('CARD_EXTERNAL')}
+                  >
+                      <CreditCard className="w-4 h-4 mr-2" />
+                      Card
+                  </Button>
+               </div>
+    
+               {/* Confirm Button */}
+               <Button
+                 className="w-full h-12 text-lg font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/20"
+                 disabled={isPending || cart.items.length === 0}
+                 onClick={handleFireQuickSale}
+               >
+                 {isPending ? (
+                   'Processing...'
+                 ) : (
+                   <>
+                     Pay & Complete
+                     <Check className="w-5 h-5 ml-2" />
+                   </>
+                 )}
+               </Button>
+            </div>
+          </div>
+  );
+
   return (
     <div className="flex flex-col md:flex-row h-[100dvh] overflow-hidden">
       {/* Left: Menu Browser */}
@@ -242,168 +413,33 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
         </div>
       </div>
 
-      {/* Right: Cart & Payment */}
-      <div className="w-full md:w-96 border-t md:border-t-0 md:border-l border-border bg-card flex flex-col shadow-xl z-20 max-h-[45vh] md:max-h-none">
-        <div className="p-4 border-b border-border bg-background flex justify-between items-center">
-            <h2 className="font-bold text-lg">Current Sale</h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-              onClick={() => cart.reset()}
-              disabled={cart.items.length === 0}
-            >
-              Clear
+      {/* Right: Cart Panel (Desktop) */}
+      {renderCartPanel("hidden md:flex flex-col w-96 border-l border-border h-full")}
+
+      {/* Floating Sticky Bar (Mobile) */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-background border-t border-border shadow-[0_-4px_12px_rgba(0,0,0,0.1)] z-40">
+        <Sheet>
+          <SheetTrigger asChild>
+            <Button className="w-full h-14 text-lg font-bold flex justify-between items-center px-6 shadow-lg shadow-primary/20 bg-blue-600 hover:bg-blue-700">
+              <span className="flex items-center gap-2">
+                 <ShoppingBag className="w-5 h-5" />
+                 {cart.items.length > 0 ? `${cart.items.length} items` : 'Empty Cart'}
+              </span>
+              <span>{formatCurrency(displayTotal)}</span>
             </Button>
-        </div>
-
-        <ScrollArea className="flex-1 p-4 bg-muted/10">
-          {cart.items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 md:h-full text-muted-foreground gap-2 opacity-50">
-              <Zap className="w-12 h-12" />
-              <p>No items added</p>
+          </SheetTrigger>
+          <SheetContent side="bottom" className="h-[90vh] p-0 flex flex-col pt-6 z-50">
+            <SheetHeader className="px-4 pb-2 border-b text-left shrink-0">
+              <SheetTitle>Quick Sale Checkout</SheetTitle>
+            </SheetHeader>
+            <div className="flex-1 overflow-hidden flex flex-col">
+               {renderCartPanel("flex flex-col h-full w-full border-none shadow-none")}
             </div>
-          ) : (
-            <div className="space-y-3">
-              {cart.items.map((item) => (
-                <div key={item.id} className="flex gap-2 bg-background p-3 rounded-lg border border-border shadow-sm">
-                   <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start">
-                          <span className="font-medium text-sm truncate">{item.name}</span>
-                          <span className="font-semibold text-sm">
-                              {formatCurrency(item.effectivePrice * item.quantity)}
-                          </span>
-                      </div>
-                      {item.selectedModifiers && item.selectedModifiers.length > 0 && (
-                        <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-1">
-                          {item.selectedModifiers.map(m => m.name).join(', ')}
-                        </p>
-                      )}
-                      <div className="flex items-center gap-2 mt-1">
-                          <div className="flex items-center border rounded-md bg-muted/50 h-7">
-                              <button 
-                                className="px-2 hover:bg-muted text-lg leading-none h-full flex items-center"
-                                onClick={() => cart.updateQuantity(item.id, -1)}
-                              >−</button>
-                              <span className="px-1 text-sm font-medium min-w-[1.2rem] text-center">{item.quantity}</span>
-                              <button 
-                                className="px-2 hover:bg-muted text-lg leading-none h-full flex items-center"
-                                onClick={() => cart.updateQuantity(item.id, 1)}
-                              >+</button>
-                          </div>
-                          <button 
-                             className="ml-auto text-destructive hover:bg-destructive/10 p-1 rounded"
-                             onClick={() => cart.removeItem(item.id)}
-                          >
-                             <Trash2 className="w-4 h-4" />
-                          </button>
-                      </div>
-                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-
-        {/* Payment Section */}
-        <div className="border-t border-border p-4 bg-background space-y-3">
-           {/* Loyalty Button */}
-           <Button
-             variant={customerData ? 'secondary' : 'outline'}
-             className="w-full justify-between h-12"
-             onClick={() => setLoyaltyOpen(true)}
-           >
-             <div className="flex items-center gap-2">
-               <UserPlus className="w-4 h-4" />
-               {customerData ? (
-                 <span className="font-semibold text-blue-600">{customerData.name || customerData.phone}</span>
-               ) : (
-                 <span>Attach Customer / Loyalty</span>
-               )}
-             </div>
-             {customerData && (
-               <Badge variant="outline" className="bg-blue-100 text-blue-800">
-                 {customerData.pointsBalance} pts
-               </Badge>
-             )}
-           </Button>
-
-           <Separator />
-
-           {/* Totals */}
-           <div className="space-y-1 pb-2">
-             <div className="flex justify-between text-sm text-muted-foreground">
-               <span>Subtotal</span>
-               <span>{formatCurrency(cart.subtotal)}</span>
-             </div>
-             {cart.discount > 0 && (
-               <div className="flex justify-between text-sm text-emerald-600">
-                 <span>Discount</span>
-                 <span>-{formatCurrency(cart.discount)}</span>
-               </div>
-             )}
-             <div className="flex justify-between text-sm text-muted-foreground">
-               <span>Tax (7%)</span>
-               <span>{formatCurrency(cart.tax)}</span>
-             </div>
-             {pointsToRedeem > 0 && (
-               <div className="flex justify-between text-sm text-blue-600 font-semibold bg-blue-50 px-2 py-0.5 rounded mt-1">
-                 <span>Points ({pointsToRedeem})</span>
-                 <span>-{formatCurrency(pointsToRedeem * 0.1)}</span>
-               </div>
-             )}
-           </div>
-           
-           <div className="flex justify-between text-xl font-bold border-t border-border pt-2">
-             <span>Total</span>
-             <span>{formatCurrency(displayTotal)}</span>
-           </div>
-
-           {/* Payment Method Selector */}
-           <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant={paymentMethod === 'CASH' ? 'default' : 'outline'}
-                className={cn(
-                    "h-10 border-2",
-                    paymentMethod === 'CASH' ? "border-emerald-600 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-100" : "hover:border-emerald-200"
-                )}
-                onClick={() => setPaymentMethod('CASH')}
-              >
-                  <Banknote className="w-4 h-4 mr-2" />
-                  Cash
-              </Button>
-              <Button
-                variant={paymentMethod === 'CARD_EXTERNAL' ? 'default' : 'outline'}
-                className={cn(
-                    "h-10 border-2",
-                    paymentMethod === 'CARD_EXTERNAL' ? "border-purple-600 bg-purple-50 text-purple-900 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-100" : "hover:border-purple-200"
-                )}
-                onClick={() => setPaymentMethod('CARD_EXTERNAL')}
-              >
-                  <CreditCard className="w-4 h-4 mr-2" />
-                  Card
-              </Button>
-           </div>
-
-           {/* Confirm Button */}
-           <Button
-             className="w-full h-12 text-lg font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/20"
-             disabled={isPending || cart.items.length === 0}
-             onClick={handleFireQuickSale}
-           >
-             {isPending ? (
-               'Processing...'
-             ) : (
-               <>
-                 Pay & Complete
-                 <Check className="w-5 h-5 ml-2" />
-               </>
-             )}
-           </Button>
-        </div>
+          </SheetContent>
+        </Sheet>
       </div>
 
-      <ModifierSelector
+            <ModifierSelector
         item={modifyingItem}
         modifierGroups={modifyingItem?.modifierGroups || []}
         onCancel={() => setModifyingItem(null)}

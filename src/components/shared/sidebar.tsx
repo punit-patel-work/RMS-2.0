@@ -21,13 +21,16 @@ import {
   Clock,
   Calendar,
   X,
-  FileClock
+  FileClock,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useConnectionStatus } from '@/hooks/use-connection-status';
+import { useTheme } from 'next-themes';
 
 const navItems = [
   // Operations Group
@@ -106,6 +109,13 @@ const navItems = [
     section: 'Management'
   },
   {
+    label: 'Customers',
+    href: '/admin/customers',
+    icon: Users,
+    roles: ['OWNER', 'SUPERVISOR'],
+    section: 'Management'
+  },
+  {
     label: 'Timesheets',
     href: '/admin/timesheets',
     icon: FileClock,
@@ -121,10 +131,30 @@ const navItems = [
   },
 ];
 
+function ThemeToggle({ collapsed }: { collapsed?: boolean }) {
+  const { theme, setTheme } = useTheme();
+  const isDark = theme === 'dark';
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={cn(
+        'text-muted-foreground hover:text-foreground',
+        collapsed ? 'w-10 h-10 p-0' : 'w-full justify-start gap-2'
+      )}
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      title={collapsed ? (isDark ? 'Light Mode' : 'Dark Mode') : undefined}
+    >
+      {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      {!collapsed && (isDark ? 'Light Mode' : 'Dark Mode')}
+    </Button>
+  );
+}
 export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; ready: number } }) {
   const pathname = usePathname();
   const { data: session } = useSession();
-  const userRole = (session?.user as any)?.role ?? '';
+  const userRole = session?.user?.role ?? '';
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useConnectionStatus();
@@ -239,7 +269,7 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
 
       <Separator />
 
-      {/* User Info + Logout */}
+      {/* User Info + Theme + Logout */}
       <div className={cn('p-3 space-y-2 shrink-0', collapsed ? 'flex flex-col items-center' : '')}>
         {!collapsed && (
           <div className="flex items-center gap-3 px-3">
@@ -256,6 +286,7 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
             </div>
           </div>
         )}
+        <ThemeToggle collapsed={collapsed} />
         <Button
           variant="ghost"
           size="sm"

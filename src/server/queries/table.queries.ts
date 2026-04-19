@@ -7,9 +7,15 @@ export async function getAllTables() {
     return prisma.table.findMany({
         include: {
             currentOrder: {
-                include: {
-                    items: true,
-                },
+                select: {
+                    id: true,
+                    total: true,
+                    amountPaid: true,
+                    paymentMethod: true,
+                    _count: {
+                        select: { items: true }
+                    }
+                }
             },
             mergedFrom: {
                 select: { id: true, name: true },

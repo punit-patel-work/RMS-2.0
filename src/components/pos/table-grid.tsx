@@ -24,8 +24,6 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  LayoutDashboard,
-  List,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/pricing";
@@ -62,10 +60,9 @@ interface TableData {
     total: number;
     amountPaid: number;
     paymentMethod: string | null;
-    items: {
-      id: string;
-      status: "PENDING" | "READY" | "SERVED" | "VOIDED";
-    }[];
+    _count: {
+      items: number;
+    };
   } | null;
 }
 
@@ -111,16 +108,16 @@ function getUpcomingWarning(
 export function TableGrid({ tables }: { tables: TableData[] }) {
   const router = useRouter();
   const { data: session } = useSession();
-  const userId = (session?.user as any)?.id ?? "";
+  const userId = session?.user?.id ?? "";
   const [isPending, startTransition] = useTransition();
 
-  // Auto-refresh the page data every 10 seconds to sync POS across devices
+  // Auto-refresh the page data every 30 seconds to sync POS across devices
   useEffect(() => {
     const interval = setInterval(() => {
       startTransition(() => {
         router.refresh();
       });
-    }, 10000); // 10 seconds
+    }, 30000); // 30 seconds
 
     return () => clearInterval(interval);
   }, [router]);
@@ -177,7 +174,8 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
     });
   };
 
-  const handleCancelReservation = (reservationId: string) => {
+  const handleCancelReservation = (reservationId: string, guestName: string) => {
+    if (!window.confirm(`Cancel reservation for "${guestName}"?`)) return;
     startTransition(async () => {
       const result = await cancelReservation(reservationId);
       if (result.success) {
@@ -222,6 +220,13 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
 
   return (
     <>
+      {visibleTables.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-64 text-muted-foreground gap-3">
+          <Users className="w-14 h-14 text-muted-foreground/30" />
+          <p className="text-lg font-medium">No tables configured</p>
+          <p className="text-sm">Go to Management → Tables to add your restaurant tables.</p>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 md:gap-4">
         {visibleTables.map((table) => {
           const config = statusConfig[table.status] || statusConfig.VACANT;
@@ -303,7 +308,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                     <div className="flex justify-between text-xs">
                       <span className="text-muted-foreground">Items</span>
                       <span className="font-medium">
-                        {table.currentOrder.items.length}
+                        {table.currentOrder._count.items}
                       </span>
                     </div>
                     <div className="flex justify-between text-xs">
@@ -405,6 +410,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
           );
         })}
       </div>
+      )}
 
       {/* ─── Reserve Dialog ──────────────────────────────── */}
       <Dialog
@@ -562,7 +568,7 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 text-red-500 hover:text-red-600 shrink-0"
-                    onClick={() => handleCancelReservation(r.id)}
+                    onClick={() => handleCancelReservation(r.id, r.guestName)}
                     disabled={isPending}
                   >
                     <XCircle className="w-4 h-4" />

@@ -1,6 +1,7 @@
 import { SessionProvider } from 'next-auth/react';
 import { Sidebar } from '@/components/shared/sidebar';
 import { getSidebarCounts } from '@/server/actions/kds.actions';
+import { KeyboardShortcutsProvider } from '@/components/shared/keyboard-shortcuts';
 
 export default async function DashboardLayout({
   children,
@@ -20,6 +21,7 @@ export default async function DashboardLayout({
           {children}
         </main>
       </div>
+      <KeyboardShortcutsProvider />
     </SessionProvider>
   );
 }
