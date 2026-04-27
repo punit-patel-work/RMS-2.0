@@ -25,8 +25,11 @@ import { serveItem, serveAllItems, collectLaterPayment } from '@/server/actions/
 import { formatCurrency } from '@/lib/pricing';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { jsonFetcher } from '@/lib/swr-fetcher';
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+// F-H8: hardened fetcher — surfaces non-2xx as SWR error rather than swallowing
+// it and rendering an empty serve board on auth/server failures.
+const fetcher = jsonFetcher<{ orders: unknown[] }>;
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();

@@ -2,8 +2,11 @@
 
 import useSWR from 'swr';
 import { useEffect, useRef } from 'react';
+import { jsonFetcher } from '@/lib/swr-fetcher';
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
+// F-H8: use the shared hardened fetcher so non-2xx responses surface as
+// SWR `error` instead of being silently swallowed as `data: undefined`.
+const fetcher = jsonFetcher<{ orders: unknown[] }>;
 
 /**
  * Plays a short beep using Web Audio API (no audio file needed).

@@ -3,13 +3,16 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { TableStatus } from '@/generated/prisma/client';
-import { auth } from '@/lib/auth';
+import { AuthError, requireManager, requireSession } from '@/lib/auth-helpers';
 
 export async function updateTableStatus(
     tableId: string,
     status: TableStatus
 ) {
     try {
+        // Any authenticated staff can flip a table between VACANT/OCCUPIED/BILL_PRINTED
+        // during service, but anonymous users must not.
+        await requireSession();
         await prisma.table.update({
             where: { id: tableId },
             data: { status },
@@ -18,6 +21,7 @@ export async function updateTableStatus(
         revalidatePath('/(dashboard)/pos', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to update table:', error);
         return { success: false, error: 'Failed to update table status' };
     }
@@ -25,6 +29,7 @@ export async function updateTableStatus(
 
 export async function createTable(name: string, seats: number, shape: string = 'SQUARE') {
     try {
+        await requireManager();
         await prisma.table.create({
             data: {
                 name,
@@ -38,6 +43,7 @@ export async function createTable(name: string, seats: number, shape: string = '
         revalidatePath('/(dashboard)/admin/tables', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to create table:', error);
         return { success: false, error: 'Failed to create table' };
     }
@@ -45,6 +51,7 @@ export async function createTable(name: string, seats: number, shape: string = '
 
 export async function updateTableLayout(tableId: string, data: { positionX?: number, positionY?: number, width?: number, height?: number, shape?: string }) {
     try {
+        await requireManager();
         await prisma.table.update({
             where: { id: tableId },
             data,
@@ -54,6 +61,7 @@ export async function updateTableLayout(tableId: string, data: { positionX?: num
         revalidatePath('/(dashboard)/pos', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to update table layout:', error);
         return { success: false, error: 'Failed to update table layout' };
     }
@@ -61,6 +69,7 @@ export async function updateTableLayout(tableId: string, data: { positionX?: num
 
 export async function deleteTable(tableId: string) {
     try {
+        await requireManager();
         await prisma.table.delete({
             where: { id: tableId },
         });
@@ -68,6 +77,7 @@ export async function deleteTable(tableId: string) {
         revalidatePath('/(dashboard)/admin/tables', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to delete table:', error);
         return { success: false, error: 'Failed to delete table' };
     }
@@ -82,50 +92,75 @@ export async function reserveTable(params: {
     reservedUntil: Date;
 }) {
     try {
-        const session = await auth();
-        const userId = session?.user?.id;
+        const session = await requireSession();
+        const userId = session.user.id;
 
-        if (!userId) {
-            return { success: false, error: 'Unauthorized: User ID missing' };
+        if (!(params.reservedAt instanceof Date) || !(params.reservedUntil instanceof Date)) {
+            return { success: false, error: 'Invalid reservation times' };
+        }
+        if (params.reservedUntil <= params.reservedAt) {
+            return { success: false, error: 'Reservation end must be after start' };
+        }
+        if (params.reservedAt < new Date(Date.now() - 60_000)) {
+            return { success: false, error: 'Reservation time cannot be in the past' };
         }
 
-        const table = await prisma.table.findUnique({
-            where: { id: params.tableId },
-        });
-        if (!table) return { success: false, error: 'Table not found' };
+        // Wrap the overlap check + create in a Serializable transaction so
+        // two concurrent reservations on the same table can't both succeed.
+        const result = await prisma.$transaction(
+            async (tx) => {
+                const table = await tx.table.findUnique({
+                    where: { id: params.tableId },
+                });
+                if (!table) {
+                    return { ok: false as const, error: 'Table not found' };
+                }
 
-        // Check for overlapping ACTIVE reservations on same table
-        const conflict = await prisma.reservation.findFirst({
-            where: {
-                tableId: params.tableId,
-                status: 'ACTIVE',
-                reservedAt: { lt: params.reservedUntil },
-                reservedUntil: { gt: params.reservedAt },
+                const conflict = await tx.reservation.findFirst({
+                    where: {
+                        tableId: params.tableId,
+                        status: 'ACTIVE',
+                        reservedAt: { lt: params.reservedUntil },
+                        reservedUntil: { gt: params.reservedAt },
+                    },
+                });
+                if (conflict) {
+                    const startStr = conflict.reservedAt.toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                    });
+                    const endStr = conflict.reservedUntil.toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                    });
+                    return {
+                        ok: false as const,
+                        error: `Conflicts with "${conflict.guestName}" reservation (${startStr}–${endStr})`,
+                    };
+                }
+
+                await tx.reservation.create({
+                    data: {
+                        tableId: params.tableId,
+                        createdById: userId,
+                        guestName: params.guestName,
+                        reservedAt: params.reservedAt,
+                        reservedUntil: params.reservedUntil,
+                    },
+                });
+                return { ok: true as const };
             },
-        });
-        if (conflict) {
-            const startStr = conflict.reservedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const endStr = conflict.reservedUntil.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            return {
-                success: false,
-                error: `Conflicts with "${conflict.guestName}" reservation (${startStr}–${endStr})`,
-            };
+            { isolationLevel: 'Serializable' }
+        );
+
+        if (!result.ok) {
+            return { success: false, error: result.error };
         }
-
-        // Create reservation record — table status does NOT change
-        await prisma.reservation.create({
-            data: {
-                tableId: params.tableId,
-                createdById: userId,
-                guestName: params.guestName,
-                reservedAt: params.reservedAt,
-                reservedUntil: params.reservedUntil,
-            },
-        });
 
         revalidatePath('/(dashboard)/pos', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to reserve table:', error);
         return { success: false, error: 'Failed to reserve table' };
     }
@@ -133,6 +168,7 @@ export async function reserveTable(params: {
 
 export async function cancelReservation(reservationId: string) {
     try {
+        await requireSession();
         await prisma.reservation.update({
             where: { id: reservationId },
             data: { status: 'CANCELLED' },
@@ -141,6 +177,7 @@ export async function cancelReservation(reservationId: string) {
         revalidatePath('/(dashboard)/pos', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to cancel reservation:', error);
         return { success: false, error: 'Failed to cancel reservation' };
     }
@@ -150,6 +187,7 @@ export async function cancelReservation(reservationId: string) {
 
 export async function mergeTables(parentId: string, childIds: string[]) {
     try {
+        await requireSession();
         const parent = await prisma.table.findUnique({ where: { id: parentId } });
         if (!parent) return { success: false, error: 'Parent table not found' };
 
@@ -182,6 +220,7 @@ export async function mergeTables(parentId: string, childIds: string[]) {
         revalidatePath('/(dashboard)/pos', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to merge tables:', error);
         return { success: false, error: 'Failed to merge tables' };
     }
@@ -189,6 +228,7 @@ export async function mergeTables(parentId: string, childIds: string[]) {
 
 export async function demergeTables(parentId: string) {
     try {
+        await requireSession();
         const children = await prisma.table.findMany({
             where: { mergedIntoId: parentId },
         });
@@ -215,6 +255,7 @@ export async function demergeTables(parentId: string) {
         revalidatePath('/(dashboard)/pos', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to demerge tables:', error);
         return { success: false, error: 'Failed to demerge tables' };
     }

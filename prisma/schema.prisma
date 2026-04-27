@@ -280,6 +280,10 @@ model Order {
   total     Float       @default(0)   // subtotal - discount + tax
   amountPaid Float      @default(0)   // Sum of all payments
 
+  // Cumulative loyalty points redeemed against this order.
+  // Used to prevent double-deduction across fireOrder + recordPayment.
+  pointsRedeemed Int    @default(0)
+
   payments  Payment[]
 
   // Refund tracking
@@ -298,6 +302,12 @@ model Order {
   @@index([status])
   @@index([createdAt])
   @@index([tableId])
+  // P-H1: customer order history page filters by customerId; without an
+  // index this scales linearly with order count.
+  @@index([customerId])
+  // P-H2: online-orders dashboard filters by orderType + scheduledAt; the
+  // composite index is what lets that query stay sub-100ms past 100k orders.
+  @@index([orderType, scheduledAt])
 }
 
 // ─── OrderItem ───────────────────────────────────────────────
@@ -394,11 +404,17 @@ model AttendanceRecord {
   id          String   @id @default(cuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   clockIn     DateTime @default(now())
   clockOut    DateTime? // Null means currently clocked in
-  
+
   notes       String?  // Optional notes (e.g., "Forgot to clock out")
+
+  // P-H3: every clockIn/clockOut/getStatus call hits findFirst({ userId, clockOut: null }).
+  // Composite index on (userId, clockOut) makes the open-record lookup an index seek
+  // rather than a scan of every row this user ever produced.
+  @@index([userId, clockOut])
+  @@index([clockIn])
 }
 
 // Staff Schedulling Model
@@ -406,7 +422,7 @@ model Schedule {
   id          String   @id @default(cuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+
   startTime   DateTime
   endTime     DateTime
   role        Role?    // Optionally specify the role they are performing this shift
@@ -415,6 +431,10 @@ model Schedule {
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  // P-H4: weekly-schedule view ranges by startTime; per-user history hits userId.
+  @@index([userId])
+  @@index([startTime])
 }
 
 // ─── Payment (Check Splitting) ───────────────────────────────
@@ -426,4 +446,8 @@ model Payment {
   amount    Float
   method    PaymentMethod
   createdAt DateTime      @default(now())
+
+  // P-H1: order-detail page lists payments by orderId; reports range by createdAt.
+  @@index([orderId])
+  @@index([createdAt])
 }

@@ -38,6 +38,13 @@ export function calcEffectivePrice(
             discount = item.basePrice * (promo.value / 100);
         }
 
+        // Clamp the discount to the base price BEFORE comparing.
+        // Prior bug: a $15 fixed-discount on a $10 item produced a $15 discount
+        // figure that then propagated into cart totals as negative-price leakage
+        // ("you saved $15 on a $10 item"). Capping here means effectivePrice is
+        // always >= 0 AND the recorded discount matches what was actually applied.
+        discount = Math.min(discount, item.basePrice);
+
         if (discount > bestDiscount) {
             bestDiscount = discount;
             bestPromo = promo;

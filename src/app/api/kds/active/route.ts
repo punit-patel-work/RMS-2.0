@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { auth } from '@/lib/auth';
 
 export async function GET() {
+    // Require an authenticated staff session before exposing any order data.
+    const session = await auth();
+    if (!session?.user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     try {
         // Fetch prep buffer setting (default 30 mins)
         const settings = await prisma.siteSettings.findUnique({

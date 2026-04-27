@@ -3,12 +3,40 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 import { promotionSchema, type PromotionInput } from '@/types';
+import { AuthError, requireManager } from '@/lib/auth-helpers';
+
+// Sanity caps on promo value to prevent negative-price / fraud scenarios.
+const MAX_PERCENT_VALUE = 100;
+const MAX_FIXED_VALUE = 10_000; // $10k absolute cap on a single promo value
+
+function validatePromoValue(type: string, value: number): string | null {
+    if (!Number.isFinite(value) || value <= 0) {
+        return 'Promotion value must be greater than zero';
+    }
+    if (type === 'PERCENT' && value > MAX_PERCENT_VALUE) {
+        return `Percent promotion value cannot exceed ${MAX_PERCENT_VALUE}`;
+    }
+    if ((type === 'FIXED' || type === 'COMBO') && value > MAX_FIXED_VALUE) {
+        return `Fixed/combo value cannot exceed ${MAX_FIXED_VALUE}`;
+    }
+    return null;
+}
 
 export async function createPromotion(input: PromotionInput) {
+    try {
+        await requireManager();
+    } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
+        throw error;
+    }
+
     const result = promotionSchema.safeParse(input);
     if (!result.success) {
         return { success: false, error: 'Invalid input' };
     }
+
+    const valueErr = validatePromoValue(result.data.type, result.data.value);
+    if (valueErr) return { success: false, error: valueErr };
 
     try {
         await prisma.promotion.create({
@@ -36,16 +64,27 @@ export async function createPromotion(input: PromotionInput) {
         revalidatePath('/(dashboard)/admin/promotions', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to create promotion:', error);
         return { success: false, error: 'Failed to create promotion' };
     }
 }
 
 export async function updatePromotion(id: string, input: PromotionInput) {
+    try {
+        await requireManager();
+    } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
+        throw error;
+    }
+
     const result = promotionSchema.safeParse(input);
     if (!result.success) {
         return { success: false, error: 'Invalid input' };
     }
+
+    const valueErr = validatePromoValue(result.data.type, result.data.value);
+    if (valueErr) return { success: false, error: valueErr };
 
     try {
         // If updating rules, we replace them
@@ -78,6 +117,7 @@ export async function updatePromotion(id: string, input: PromotionInput) {
         revalidatePath('/(dashboard)/admin/promotions', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to update promotion:', error);
         return { success: false, error: 'Failed to update promotion' };
     }
@@ -85,6 +125,7 @@ export async function updatePromotion(id: string, input: PromotionInput) {
 
 export async function togglePromotion(id: string) {
     try {
+        await requireManager();
         const promo = await prisma.promotion.findUnique({ where: { id } });
         if (!promo) return { success: false, error: 'Promotion not found' };
 
@@ -96,6 +137,7 @@ export async function togglePromotion(id: string) {
         revalidatePath('/(dashboard)/admin/promotions', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to toggle promotion:', error);
         return { success: false, error: 'Failed to toggle promotion' };
     }
@@ -103,10 +145,12 @@ export async function togglePromotion(id: string) {
 
 export async function deletePromotion(id: string) {
     try {
+        await requireManager();
         await prisma.promotion.delete({ where: { id } });
         revalidatePath('/(dashboard)/admin/promotions', 'page');
         return { success: true };
     } catch (error) {
+        if (error instanceof AuthError) return { success: false, error: error.message };
         console.error('Failed to delete promotion:', error);
         return { success: false, error: 'Failed to delete promotion' };
     }

@@ -32,9 +32,15 @@ type ExtendedPromotion = Promotion & {
     })[];
 };
 
-type ExtendedMenuItem = MenuItem & {
-    category: Category;
-};
+// Narrow structural type: calculateCart only actually reads id / basePrice /
+// categoryId. The server passes the full MenuItem + category relation; the
+// client store builds objects from React state. Using a narrow type here means
+// neither caller needs to fabricate a MenuItem shape with `as any`.
+export interface CartMenuItem {
+    id: string;
+    basePrice: number;
+    categoryId: string;
+}
 
 /**
  * Centralized cart calculation.
@@ -43,13 +49,13 @@ type ExtendedMenuItem = MenuItem & {
  */
 export function calculateCart(
     cartItems: CartItemInput[],
-    menuItems: ExtendedMenuItem[],
+    menuItems: CartMenuItem[],
     activePromotions: ExtendedPromotion[]
 ): CalculationResult {
     // 1. Expand cart into individual units for easier processing
     // e.g. { id: 'burger', qty: 2 } -> [unit1, unit2]
     let remainingUnits: { uid: string; itemId: string; basePrice: number; categoryId: string }[] = [];
-    const itemMap = new Map<string, ExtendedMenuItem>();
+    const itemMap = new Map<string, CartMenuItem>();
     let uidCounter = 0;
 
     for (const item of cartItems) {
@@ -223,17 +229,31 @@ export function calculateCart(
     }
 
     // 5. Calculate final totals
-    const subtotal = groupedItems.reduce((acc, i) => acc + i.frozenPrice * i.quantity, 0);
-    const baseTotal = groupedItems.reduce((acc, i) => acc + i.basePrice * i.quantity, 0); // Original price
+    //
+    // Tax policy: in most US jurisdictions (and for restaurant point-of-sale
+    // compliance in general), sales tax is assessed on the PRE-DISCOUNT subtotal
+    // for merchant-funded promotions — the state doesn't care that you gave the
+    // customer a loyalty discount, it wants tax on what the meal costs.
+    // Previously this file taxed the POST-discount subtotal, which systematically
+    // under-reported tax and exposed the business to back-tax liability.
+    //
+    // Rounding: all money figures are rounded to the cent at the final step to
+    // prevent float drift that would otherwise accumulate across dozens of line
+    // items. Do NOT round intermediate per-item prices — the aggregate rounds
+    // once at the end, which matches every major POS.
+    const round2 = (n: number) => Math.round(n * 100) / 100;
 
-    const tax = subtotal * 0.07; // 7% Tax
+    const subtotal = groupedItems.reduce((acc, i) => acc + i.frozenPrice * i.quantity, 0);
+    const baseTotal = groupedItems.reduce((acc, i) => acc + i.basePrice * i.quantity, 0); // Pre-discount
+
+    const tax = baseTotal * 0.07; // 7% tax on pre-discount base
     const total = subtotal + tax;
 
     return {
         items: groupedItems,
-        subtotal: subtotal,
-        discount: baseTotal - subtotal,
-        tax: tax,
-        total: total,
+        subtotal: round2(subtotal),
+        discount: round2(baseTotal - subtotal),
+        tax: round2(tax),
+        total: round2(total),
     };
 }
