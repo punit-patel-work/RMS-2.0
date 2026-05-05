@@ -1,5 +1,6 @@
 import { getAllTables } from '@/server/queries/table.queries';
 import { TableManager } from '@/components/admin/table-manager';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,7 @@ export default async function TablesPage() {
           Add and manage restaurant tables
         </p>
       </div>
-      <TableManager tables={JSON.parse(JSON.stringify(tables))} />
+      <TableManager tables={toPlain(tables)} />
     </div>
   );
 }

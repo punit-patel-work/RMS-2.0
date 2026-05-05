@@ -23,7 +23,7 @@ interface OrderItem {
 interface KdsOrder {
   id: string;
   orderNumber: number;
-  createdAt: string;
+  createdAt: string | Date;
   orderType?: string;
   customerName?: string | null;
   customerPhone?: string | null;
@@ -32,7 +32,7 @@ interface KdsOrder {
   items: OrderItem[];
 }
 
-function getAgingInfo(createdAt: string) {
+function getAgingInfo(createdAt: string | Date) {
   const minutes = Math.floor(
     (Date.now() - new Date(createdAt).getTime()) / 60000
   );
@@ -124,9 +124,24 @@ export function KdsCard({ order }: { order: KdsOrder }) {
               )
             )}
           </div>
-          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-            <Clock className="w-3.5 h-3.5" />
-            <span>{aging.minutes}m</span>
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Clock className="w-3.5 h-3.5" aria-hidden="true" />
+            {/* U-C6: aging was conveyed color-only (border tint). Add the
+                explicit label so colorblind staff and screen reader users
+                also see "Fresh / Warning / Late" alongside the minute count. */}
+            <span aria-label={`${aging.minutes} minutes old, ${aging.label}`}>
+              {aging.minutes}m
+            </span>
+            <span
+              className={cn(
+                'px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase',
+                aging.label === 'Fresh' && 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+                aging.label === 'Warning' && 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+                aging.label === 'Late' && 'bg-red-500/15 text-red-700 dark:text-red-400',
+              )}
+            >
+              {aging.label}
+            </span>
           </div>
         </div>
         {isTakeout && order.customerPhone && (

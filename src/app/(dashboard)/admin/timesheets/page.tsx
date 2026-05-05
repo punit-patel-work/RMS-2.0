@@ -8,7 +8,7 @@ export const metadata = {
 
 export default async function TimesheetsPage() {
   const session = await auth();
-  if (!session?.user || (session.user as any).role !== 'OWNER' && (session.user as any).role !== 'SUPERVISOR') {
+  if (!session?.user || (session.user.role !== 'OWNER' && session.user.role !== 'SUPERVISOR')) {
     redirect('/pos');
   }
 

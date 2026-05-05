@@ -1,6 +1,7 @@
 import { getAllPromotions } from '@/server/queries/promotion.queries';
 import { getAllMenuItems, getAllCategories } from '@/server/queries/menu.queries';
 import { PromotionManager } from '@/components/admin/promotion-manager';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,9 +21,9 @@ export default async function PromotionsPage() {
         </p>
       </div>
       <PromotionManager
-        promotions={JSON.parse(JSON.stringify(promotions))}
-        menuItems={JSON.parse(JSON.stringify(menuItems))}
-        categories={JSON.parse(JSON.stringify(categories))}
+        promotions={toPlain(promotions)}
+        menuItems={toPlain(menuItems)}
+        categories={toPlain(categories)}
       />
     </div>
   );

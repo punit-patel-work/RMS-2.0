@@ -42,6 +42,11 @@ function timeAgo(dateStr: string) {
 export function ServeBoard() {
   const { data, mutate, isLoading } = useSWR('/api/serve/ready', fetcher, {
     refreshInterval: 5000,
+    // P-H3: dedupe burst requests when both refreshInterval and a manual
+    // mutate fire within the same window — without this, an action that
+    // calls mutate() right before a tick would double-fetch.
+    dedupingInterval: 2000,
+    revalidateOnFocus: true,
   });
   const [isPending, startTransition] = useTransition();
   const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);

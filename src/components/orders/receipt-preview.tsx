@@ -169,27 +169,49 @@ export function ReceiptPreview({
 
           {/* Items */}
           <div className="space-y-1">
-            {activeItems.map((item, idx) => (
-              <div key={idx}>
-                <div className="flex justify-between">
-                  <span>
-                    {item.quantity}× {item.menuItem.name}
-                    {item.refunded && ' [REFUNDED]'}
-                  </span>
-                  <span>{formatCurrency(item.frozenPrice * item.quantity)}</span>
+            {activeItems.map((item, idx) => {
+              // F-M5: when frozenPrice ≠ basePrice (combo or item-level promo
+              // applied), surface the original price + discount on its own line
+              // instead of silently displaying an averaged per-unit price that
+              // doesn't match the menu. Staff troubleshooting "why was this
+              // line $X" can now see the math.
+              const modsTotal = (item.modifiers ?? []).reduce(
+                (s, m) => s + Number(m.price),
+                0
+              );
+              const baseUnit = item.menuItem.basePrice + modsTotal;
+              const lineBaseTotal = baseUnit * item.quantity;
+              const lineFrozenTotal = item.frozenPrice * item.quantity;
+              const lineDiscount = lineBaseTotal - lineFrozenTotal;
+              const discounted = Math.abs(lineDiscount) > 0.005;
+              return (
+                <div key={idx}>
+                  <div className="flex justify-between">
+                    <span>
+                      {item.quantity}× {item.menuItem.name}
+                      {item.refunded && ' [REFUNDED]'}
+                    </span>
+                    <span>{formatCurrency(lineBaseTotal)}</span>
+                  </div>
+                  {item.modifiers?.map((mod, j) => (
+                    <p key={j} className="pl-4 text-[10px] text-gray-500">
+                      + {mod.name} ({formatCurrency(Number(mod.price))})
+                    </p>
+                  ))}
+                  {discounted && (
+                    <div className="flex justify-between pl-4 text-[10px] text-green-700">
+                      <span>↳ promo</span>
+                      <span>-{formatCurrency(lineDiscount)}</span>
+                    </div>
+                  )}
+                  {item.notes && (
+                    <p className="pl-4 text-[10px] text-gray-400 italic">
+                      Note: {item.notes}
+                    </p>
+                  )}
                 </div>
-                {item.modifiers?.map((mod, j) => (
-                  <p key={j} className="pl-4 text-[10px] text-gray-500">
-                    + {mod.name} ({formatCurrency(mod.price)})
-                  </p>
-                ))}
-                {item.notes && (
-                  <p className="pl-4 text-[10px] text-gray-400 italic">
-                    Note: {item.notes}
-                  </p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="border-t border-dashed border-gray-400 my-2" />

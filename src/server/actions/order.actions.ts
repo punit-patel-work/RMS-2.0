@@ -14,16 +14,29 @@ import { AuthError, requireManager, requireSession } from '@/lib/auth-helpers';
 const MAX_LINE_QTY = 99;
 const MAX_ORDER_LINES = 50;
 const MAX_NOTES_LEN = 500;
+// F-C5/F-M19: minimum lead time for scheduled (storefront) orders. Stops
+// clients from booking pickups for "five minutes ago" or even "right now"
+// when the kitchen needs a real prep window.
+const MIN_LEAD_TIME_MS = 15 * 60 * 1000;
+// F-M18: liberal but real phone format — digits, spaces, dashes, parens, +.
+// Strict E.164 is too restrictive for a US restaurant POS.
+const PHONE_RE = /^[+\d][\d\s\-().]{6,30}$/;
 
 const createOrderSchema = z.object({
     tableId: z.string().optional(),
     userId: z.string().optional(), // Optional for Online Storefront orders
     orderType: z.enum(['DINE_IN', 'TAKEOUT', 'QUICK_SALE']).default('DINE_IN'),
     paymentMethod: z.enum(['CASH', 'CARD_EXTERNAL', 'LATER_PAY']).optional(), // Required for QUICK_SALE
-    customerName: z.string().max(200).optional(),
-    customerPhone: z.string().max(50).optional(),
+    customerName: z.string().trim().max(200).optional(),
+    customerPhone: z.string().trim().regex(PHONE_RE, 'Invalid phone number').max(50).optional(),
     customerId: z.string().optional(),
-    scheduledAt: z.coerce.date().optional(),
+    scheduledAt: z.coerce
+        .date()
+        .refine(
+            (d) => d.getTime() >= Date.now() + MIN_LEAD_TIME_MS,
+            'Scheduled time must be at least 15 minutes from now'
+        )
+        .optional(),
     pointsToRedeem: z.number().int().min(0).max(1_000_000).optional().default(0),
     items: z
         .array(
@@ -58,13 +71,45 @@ export async function fireOrder(input: CreateOrderInput) {
     }
 
     try {
-        // Fallback for online orders without explicit staff userId
+        // Resolve & validate the staff user id behind this order.
+        //
+        // Bug it fixes: a JWT cookie issued before the database was reseeded
+        // still carries a now-defunct `user.id`. Passing that straight through
+        // to `Order.createdById` blew up with a Prisma P2003 foreign-key
+        // violation that gave the cashier nothing actionable. We now:
+        //   1. If a userId was sent, verify it exists.
+        //   2. If not (online checkout) OR the sent id is stale, fall back to
+        //      the OWNER user so the order still goes through.
+        //   3. If even that's missing, return a clear instruction to log out.
         let finalUserId: string;
         if (userId) {
-            finalUserId = userId;
+            const exists = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true },
+            });
+            if (exists) {
+                finalUserId = exists.id;
+            } else {
+                // Stale session — userId no longer in DB. Try to silently
+                // recover via the owner so service continues; if that's
+                // also gone, surface a "log out and back in" message.
+                const ownerUser = await prisma.user.findFirst({ where: { role: 'OWNER' } });
+                if (!ownerUser) {
+                    return {
+                        success: false,
+                        error: 'Your session is out of sync with the database. Please log out and back in.',
+                    };
+                }
+                finalUserId = ownerUser.id;
+            }
         } else {
             const ownerUser = await prisma.user.findFirst({ where: { role: 'OWNER' } });
-            if (!ownerUser) return { success: false, error: 'System configuration error: No owner user found for online checkout.' };
+            if (!ownerUser) {
+                return {
+                    success: false,
+                    error: 'System configuration error: No owner user found for online checkout.',
+                };
+            }
             finalUserId = ownerUser.id;
         }
 
@@ -1196,7 +1241,11 @@ export async function refundOrder(params: {
                     });
                 }
 
-                const newRefundTotal = alreadyRefunded + refundAmount;
+                // F-M16: round refund figures to the cent before persisting so
+                // repeated partial refunds don't accumulate float drift.
+                const round2 = (n: number) => Math.round(n * 100) / 100;
+                refundAmount = round2(refundAmount);
+                const newRefundTotal = round2(alreadyRefunded + refundAmount);
                 // Mark order as fully REFUNDED when the total refunded >= total, regardless
                 // of FULL/PARTIAL flag — prevents further refunds against this order.
                 const isNowFullyRefunded = newRefundTotal + 0.0001 >= order.total;

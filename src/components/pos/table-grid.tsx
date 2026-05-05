@@ -38,8 +38,9 @@ import { toast } from "sonner";
 interface ReservationData {
   id: string;
   guestName: string;
-  reservedAt: string;
-  reservedUntil: string;
+  // toPlain() preserves Date objects; legacy callers may still send strings.
+  reservedAt: Date | string;
+  reservedUntil: Date | string;
 }
 
 interface TableData {
@@ -238,12 +239,40 @@ export function TableGrid({ tables }: { tables: TableData[] }) {
           return (
             <Card
               key={table.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Table ${table.name}, ${config.text.toLowerCase()}, ${table.seats} seats${upcomingWarning ? `, reservation upcoming for ${upcomingWarning.guestName}` : ''}`}
               className={cn(
-                "cursor-pointer border-2 transition-all duration-200 active:scale-[0.97] relative",
+                "cursor-pointer border-2 transition-all duration-200 active:scale-[0.97] relative outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 config.bg,
                 upcomingWarning && "ring-2 ring-amber-400/60",
               )}
-              onClick={() => router.push(`/pos/${table.id}`)}
+              onClick={() => {
+                // F-M10: don't silently seat a walk-in on a table that already
+                // has an imminent reservation. The visual ring catches the
+                // careful eye; the confirm catches everyone else. We only
+                // prompt if there's no active order yet (otherwise it's a
+                // server returning to an open ticket and they know what they're
+                // doing).
+                if (upcomingWarning && !table.currentOrder) {
+                  const startTime = new Date(upcomingWarning.reservedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  });
+                  const ok = window.confirm(
+                    `"${upcomingWarning.guestName}" is reserved for ${startTime} on ${table.name}. Seat a walk-in here anyway?`
+                  );
+                  if (!ok) return;
+                }
+                router.push(`/pos/${table.id}`);
+              }}
+              // U-C5: cards are reachable + activatable via keyboard.
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  (e.currentTarget as HTMLElement).click();
+                }
+              }}
             >
               <CardContent className="p-3 md:p-4 space-y-2">
                 {/* Header */}

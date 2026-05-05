@@ -42,7 +42,7 @@ import {
   Gift,
   ShoppingBag,
 } from 'lucide-react';
-import { useCartStore } from '@/stores/cart-store';
+import { useCartStore, useCartHydrated } from '@/stores/cart-store';
 import {
   fireOrder,
   addItemsToOrder,
@@ -54,6 +54,7 @@ import {
 } from '@/server/actions/order.actions';
 import { verifyCustomer, registerCustomer } from '@/server/actions/crm.actions';
 import { formatCurrency } from '@/lib/pricing';
+import { CartLineItem } from '@/components/pos/cart-line-item';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { Promotion, MenuItem, Category } from '@/generated/prisma/client';
@@ -81,11 +82,13 @@ interface TableData {
     paymentMethod: string | null;
     items: OrderItemData[];
   } | null;
-  reservations: {
+  // Optional: getTableById doesn't include reservations (only the table-grid
+  // page does). Make this optional so single-table page renders work too.
+  reservations?: {
     id: string;
     guestName: string;
-    reservedAt: Date;
-    reservedUntil: Date;
+    reservedAt: Date | string;
+    reservedUntil: Date | string;
   }[];
 }
 
@@ -141,15 +144,24 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
   const [usePoints, setUsePoints] = useState(false);
 
   const cart = useCartStore();
+  const hydrated = useCartHydrated();
 
-  // Set table and promotions context on mount
+  // Wait for persist hydration to finish before we decide whether to reset.
+  // Otherwise the very first mount sees `getState().tableId === null` (the
+  // initial pre-hydration value), thinks we've switched tables, and wipes
+  // the cart you just left to check the KDS for.
   useEffect(() => {
-    // Reset cart when entering a table
-    cart.reset();
-    cart.setTable(table.id, table.name);
+    if (!hydrated) return;
+    const currentCartTable = useCartStore.getState().tableId;
+    if (currentCartTable !== table.id) {
+      cart.reset();
+      cart.setTable(table.id, table.name);
+    }
+    // Promotions are reapplied every mount because they're not persisted —
+    // this re-runs cart recalc with the freshest promo set.
     cart.setPromotions(promotions as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table.id, table.name, promotions]);
+  }, [hydrated, table.id, table.name, promotions]);
 
   // Menu search: if searching, show results across all categories; else show active category
   const currentItems = menuSearch.trim()
@@ -182,7 +194,7 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
     startTransition(async () => {
       const res = await fireOrder({
         tableId: table.id,
-        userId: (session?.user as any)?.id ?? '',
+        userId: session?.user?.id ?? '',
         orderType: 'DINE_IN',
         pointsToRedeem,
         items: cart.items.map((i) => ({
@@ -209,7 +221,7 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
     startTransition(async () => {
       const result = await addItemsToOrder({
         orderId: table.currentOrder!.id,
-        userId: (session?.user as any)?.id ?? '',
+        userId: session?.user?.id ?? '',
         items: cart.items.map((i) => ({
           menuItemId: i.menuItemId,
           quantity: i.quantity,
@@ -254,23 +266,28 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
   const handlePayment = (method: 'CASH' | 'CARD_EXTERNAL') => {
     if (!table.currentOrder) return;
 
-    // Assuming table.currentOrder might have an amountPaid field or similar for split payments
-    // For now, we'll use 0 if not present, and assume the server action handles the actual remaining balance.
-    const remaining = table.currentOrder.total - table.currentOrder.amountPaid;
-    const remainingAfterPoints = Math.max(0, remaining - (pointsToRedeem * 0.1));
+    // F-M17: re-derive remaining from the latest props at the moment of the
+    // click (rather than capturing earlier in render) AND defer to the server's
+    // own balance-owing cap inside recordPayment for the source of truth.
+    // If the customer or pointsToRedeem changes mid-dialog, we always use the
+    // freshest values here, and the server still rejects over-payment even if
+    // the client somehow sends stale numbers.
+    const order = table.currentOrder;
+    const remaining = order.total - order.amountPaid;
+    const remainingAfterPoints = Math.max(0, remaining - pointsToRedeem * 0.1);
     let payAmt = remainingAfterPoints;
 
     if (splitAmountStr) {
       const parsed = parseFloat(splitAmountStr);
-      if (isNaN(parsed) || parsed <= 0) {
+      if (!Number.isFinite(parsed) || parsed <= 0) {
         toast.error('Invalid payment amount');
         return;
       }
-      if (parsed > remainingAfterPoints) {
+      if (parsed > remainingAfterPoints + 0.005) {
         toast.error('Payment exceeds remaining balance');
         return;
       }
-      payAmt = parsed;
+      payAmt = Math.min(parsed, remainingAfterPoints);
     }
 
     startTransition(async () => {
@@ -308,9 +325,25 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
   const handleVoidOrder = () => {
     if (!table.currentOrder) return;
 
+    // U-C3: voiding wipes revenue and inventory deductions — require an
+    // explicit confirm with a reason for audit trail. The reason isn't
+    // currently persisted on the Order (would need a schema field), but
+    // capturing it here makes the console.log traceable and prevents the
+    // accidental "I clicked the wrong button" voids that had no friction.
+    const reason = window.prompt(
+      'Void this order?\n\nReason (required, e.g. "duplicate", "customer left", "wrong item"):'
+    );
+    if (reason === null) return; // user cancelled
+    if (!reason.trim()) {
+      toast.error('Void requires a reason');
+      return;
+    }
+
     startTransition(async () => {
       const result = await voidOrder(table.currentOrder!.id);
       if (result.success) {
+        // Log reason for audit until a proper voidReason column lands.
+        console.info(`[VOID] order=${table.currentOrder!.id} reason="${reason.trim()}"`);
         toast.success('Order voided');
         router.push('/pos');
         router.refresh();
@@ -461,99 +494,25 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
                     </h3>
                   )}
                   {cart.items.map((item) => (
-                    <div key={item.id} className="space-y-1">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <p className="font-medium text-sm">{item.name}</p>
-                          {item.selectedModifiers && item.selectedModifiers.length > 0 && (
-                            <p className="text-xs text-muted-foreground leading-tight mt-0.5 mb-0.5">
-                              {item.selectedModifiers.map(m => m.name).join(', ')}
-                            </p>
-                          )}
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            {item.discount > 0 && (
-                              <>
-                                <span className="line-through">
-                                  {formatCurrency(item.basePrice)}
-                                </span>
-                                <span className="text-emerald-500">
-                                  {formatCurrency(item.effectivePrice)}
-                                </span>
-                              </>
-                            )}
-                            {item.discount === 0 && (
-                              <span>{formatCurrency(item.basePrice)}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() =>
-                              cart.updateQuantity(item.id, -1)
-                            }
-                          >
-                            <Minus className="w-3 h-3" />
-                          </Button>
-                          <span className="w-6 text-center text-sm font-semibold">
-                            {item.quantity}
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => {
-                              const originalItem = currentItems.find((i) => i.id === item.menuItemId) || categories.flatMap(c => c.items).find(i => i.id === item.menuItemId);
-                              const maxQty = (originalItem && originalItem.trackStock) ? originalItem.stockQuantity : Infinity;
-                              if (item.quantity >= maxQty) {
-                                toast.error(`Maximum stock reached`);
-                                return;
-                              }
-                              cart.updateQuantity(item.id, 1);
-                            }}
-                          >
-                            <Plus className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-destructive"
-                            onClick={() => cart.removeItem(item.id)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </div>
-    
-                      {/* Notes / Allergy input */}
-                      <div className="flex items-center gap-1">
-                        {item.notes ? (
-                          <button
-                            className="text-xs text-amber-600 flex items-center gap-1 hover:underline"
-                            onClick={() => {
-                              setNotesItemId(item.id);
-                              setNotesValue(item.notes || '');
-                            }}
-                          >
-                            <MessageSquare className="w-3 h-3" />
-                            {item.notes}
-                          </button>
-                        ) : (
-                          <button
-                            className="text-xs text-muted-foreground flex items-center gap-1 hover:text-foreground"
-                            onClick={() => {
-                              setNotesItemId(item.id);
-                              setNotesValue('');
-                            }}
-                          >
-                            <MessageSquare className="w-3 h-3" />
-                            Add note / allergy
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                    <CartLineItem
+                      key={item.id}
+                      item={item}
+                      onDecrement={() => cart.updateQuantity(item.id, -1)}
+                      onIncrement={() => {
+                        const originalItem = currentItems.find((i) => i.id === item.menuItemId) || categories.flatMap(c => c.items).find(i => i.id === item.menuItemId);
+                        const maxQty = (originalItem && originalItem.trackStock) ? originalItem.stockQuantity : Infinity;
+                        if (item.quantity >= maxQty) {
+                          toast.error(`Maximum stock reached`);
+                          return;
+                        }
+                        cart.updateQuantity(item.id, 1);
+                      }}
+                      onRemove={() => cart.removeItem(item.id)}
+                      onEditNotes={() => {
+                        setNotesItemId(item.id);
+                        setNotesValue(item.notes || '');
+                      }}
+                    />
                   ))}
                 </div>
               )}
@@ -808,7 +767,10 @@ export function OrderBuilder({ table, categories, promotions }: Props) {
       </div>
 
       {/* Right: Cart Panel (Desktop) */}
-      {renderCartPanel("hidden md:flex flex-col w-80 lg:w-96 border-l border-border h-full")}
+      {/* U-H2: was fixed w-80 lg:w-96 which overflowed on narrower laptops.
+          Use a width-clamped flex column that grows with content but never
+          exceeds 24rem on desktop. */}
+      {renderCartPanel("hidden md:flex flex-col w-full max-w-sm lg:max-w-md border-l border-border h-full shrink-0")}
 
       {/* Floating Sticky Bar (Mobile) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-background border-t border-border shadow-[0_-4px_12px_rgba(0,0,0,0.1)] z-40">

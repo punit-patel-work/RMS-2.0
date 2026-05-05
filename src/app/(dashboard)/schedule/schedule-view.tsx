@@ -21,12 +21,26 @@ import { toast } from 'sonner';
 
 export function ScheduleView({ userRole, currentUserId }: { userRole: string, currentUserId: string }) {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
-    // Basic date-fns replacement for start of week (Sunday)
+    // F-M8: locale-aware week start. Intl.Locale.weekInfo returns
+    // `firstDay` 1..7 (Mon..Sun ISO numbering); JS Date.getDay() returns
+    // 0..6 (Sun..Sat). Convert and fall back to Sunday on older runtimes.
     const d = new Date();
-    d.setHours(0,0,0,0);
-    const day = d.getDay();
-    const diff = d.getDate() - day;
-    return new Date(d.setDate(diff));
+    d.setHours(0, 0, 0, 0);
+    let firstDayJs = 0; // Sunday default
+    try {
+      const locale = new Intl.Locale(navigator.language);
+      // Older lib types may not include weekInfo — read defensively.
+      const weekInfo = (locale as unknown as { weekInfo?: { firstDay: number } }).weekInfo
+        ?? (locale as unknown as { getWeekInfo?: () => { firstDay: number } }).getWeekInfo?.();
+      if (weekInfo?.firstDay) {
+        firstDayJs = weekInfo.firstDay === 7 ? 0 : weekInfo.firstDay; // ISO 7 = Sun
+      }
+    } catch {
+      // ignore — fall through to Sunday
+    }
+    const offset = (d.getDay() - firstDayJs + 7) % 7;
+    d.setDate(d.getDate() - offset);
+    return d;
   });
 
   const weekEnd = new Date(currentWeekStart);

@@ -3,6 +3,13 @@ import { Sidebar } from '@/components/shared/sidebar';
 import { getSidebarCounts } from '@/server/actions/kds.actions';
 import { KeyboardShortcutsProvider } from '@/components/shared/keyboard-shortcuts';
 
+// Every dashboard route is per-session (auth() reads cookies via headers()),
+// so static prerender attempts are guaranteed to throw DYNAMIC_SERVER_USAGE.
+// Telling Next.js up front prevents the build-time probe and the noisy
+// "Failed to fetch sidebar counts" log lines that come from the catch block
+// swallowing the dynamic-render signal.
+export const dynamic = 'force-dynamic';
+
 export default async function DashboardLayout({
   children,
 }: {

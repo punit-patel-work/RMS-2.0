@@ -44,7 +44,10 @@ interface UserData {
   employeeId: string;
   role: string;
   isActive: boolean;
-  createdAt: string;
+  // Accept either: toPlain() preserves Date objects (Next.js serializes them
+  // natively now), and any pre-existing callsites that still send ISO strings
+  // continue to work.
+  createdAt: Date | string;
   _count: { orders: number };
 }
 

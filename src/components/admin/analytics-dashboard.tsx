@@ -3,7 +3,6 @@
 import { useState, useTransition, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
   DollarSign,
   ShoppingCart,
@@ -13,12 +12,33 @@ import {
   CreditCard,
   Download,
   Trash2,
+  Receipt,
+  Timer,
+  RefreshCcw,
+  Wallet,
+  Package2,
+  RotateCcw,
 } from 'lucide-react';
 import { getSalesAnalytics } from '@/server/queries/analytics.queries';
 import { formatCurrency } from '@/lib/pricing';
-import { RevenueChart } from './analytics/revenue-chart';
-import { OrderTypeChart } from './analytics/order-type-chart';
-import { CategorySalesChart } from './analytics/category-sales-chart';
+import dynamic from 'next/dynamic';
+import { KpiCard } from './analytics/kpi-card';
+import { InsightsPanel } from './analytics/insights-panel';
+import { Heatmap } from './analytics/heatmap';
+import { StaffLeaderboard } from './analytics/staff-leaderboard';
+import { InventoryAlerts } from './analytics/inventory-alerts';
+import { CustomerInsights } from './analytics/customer-insights';
+import { MenuPerformance } from './analytics/menu-performance';
+
+// Defer heavy chart components.
+const RevenueChart = dynamic(() => import('./analytics/revenue-chart').then(m => m.RevenueChart), {
+  ssr: false,
+  loading: () => <div className="h-72 rounded bg-muted/30 animate-pulse" />,
+});
+const OrderTypeChart = dynamic(() => import('./analytics/order-type-chart').then(m => m.OrderTypeChart), {
+  ssr: false,
+  loading: () => <div className="h-64 rounded bg-muted/30 animate-pulse" />,
+});
 
 type AnalyticsData = Awaited<ReturnType<typeof getSalesAnalytics>>;
 
@@ -26,20 +46,16 @@ const periods = [
   { label: 'Today', value: 'today' },
   { label: '7 Days', value: '7d' },
   { label: '30 Days', value: '30d' },
+  { label: '90 Days', value: '90d' },
 ] as const;
 
 function getDateRange(period: string) {
   const end = new Date();
   const start = new Date();
-
-  if (period === 'today') {
-    start.setHours(0, 0, 0, 0);
-  } else if (period === '7d') {
-    start.setDate(start.getDate() - 7);
-  } else if (period === '30d') {
-    start.setDate(start.getDate() - 30);
-  }
-
+  if (period === 'today') start.setHours(0, 0, 0, 0);
+  else if (period === '7d') start.setDate(start.getDate() - 7);
+  else if (period === '30d') start.setDate(start.getDate() - 30);
+  else if (period === '90d') start.setDate(start.getDate() - 90);
   return { startDate: start, endDate: end };
 }
 
@@ -47,6 +63,7 @@ export function AnalyticsDashboard() {
   const [period, setPeriod] = useState('today');
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   useEffect(() => {
     loadData();
@@ -58,272 +75,292 @@ export function AnalyticsDashboard() {
       const range = getDateRange(period);
       const result = await getSalesAnalytics(range);
       setData(result);
+      setLastRefreshed(new Date());
     });
   };
 
   const handleExportCsv = () => {
     if (!data) return;
-
-    const rows = [
-      ['Metric', 'Value'],
-      ['Gross Sales', data.grossSales.toFixed(2)],
-      ['Order Count', data.orderCount.toString()],
-      ['Average Ticket', data.averageTicket.toFixed(2)],
-      ['Total Discount', data.totalDiscount.toFixed(2)],
-      ['Voided Items', data.voidedItemCount.toString()],
-      ['Void Value', data.voidedItemValue.toFixed(2)],
-      ['Cash Orders', data.paymentBreakdown.cash.count.toString()],
-      ['Cash Total', data.paymentBreakdown.cash.total.toFixed(2)],
-      ['Card Orders', data.paymentBreakdown.card.count.toString()],
-      ['Card Total', data.paymentBreakdown.card.total.toFixed(2)],
+    const rows: (string | number)[][] = [
+      ['RMS Analytics', `period=${period}`, `exported=${new Date().toISOString()}`],
       [],
-      ['Top Items', 'Qty Sold', 'Revenue'],
-      ...data.topItems.map((i) => [i.name, i.count.toString(), i.revenue.toFixed(2)]),
+      ['== HEADLINE =='],
+      ['Metric', 'Value', 'vs Previous %'],
+      ['Net Revenue', data.netRevenue.toFixed(2), data.deltas.netRevenue?.toFixed(1) ?? 'n/a'],
+      ['Gross Sales', data.grossSales.toFixed(2), data.deltas.grossSales?.toFixed(1) ?? 'n/a'],
+      ['Orders', data.orderCount, data.deltas.orderCount?.toFixed(1) ?? 'n/a'],
+      ['Average Ticket', data.averageTicket.toFixed(2), data.deltas.averageTicket?.toFixed(1) ?? 'n/a'],
+      ['Items Per Order', data.itemsPerOrder.toFixed(2), ''],
+      ['Total Discount', data.totalDiscount.toFixed(2), ''],
+      ['Tax Collected', data.totalTax.toFixed(2), ''],
+      ['Voided Items', data.voidedItemCount, ''],
+      ['Refund Total', data.totalRefunds.toFixed(2), ''],
+      [],
+      ['== TOP ITEMS =='],
+      ['Item', 'Qty', 'Revenue', 'Category'],
+      ...data.topItems.map((i) => [i.name, i.count, i.revenue.toFixed(2), i.categoryName]),
+      [],
+      ['== STAFF =='],
+      ['Name', 'Role', 'Orders', 'Revenue', 'Avg Ticket'],
+      ...data.staffLeaderboard.map((s) => [s.name, s.role, s.orders, s.revenue.toFixed(2), s.avgTicket.toFixed(2)]),
+      [],
+      ['== TOP CUSTOMERS =='],
+      ['Name', 'Phone', 'Orders', 'Total Spent'],
+      ...data.customers.top.map((c) => [c.name ?? 'Anonymous', c.phone, c.orderCount, c.totalSpent.toFixed(2)]),
     ];
-
-    const csv = rows.map((r) => r.join(',')).join('\n');
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `rms-analytics-${period}.csv`;
+    a.download = `rms-analytics-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   return (
     <div className="space-y-6">
-      {/* Period Selector */}
-      <div className="flex items-center gap-2">
-        {periods.map((p) => (
+      {/* ─── 1. STICKY TOOLBAR ─────────────────────────────── */}
+      <div className="sticky top-0 z-20 -mx-6 px-6 py-3 bg-background/85 backdrop-blur-md border-b">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 rounded-md bg-muted p-0.5">
+            {periods.map((p) => (
+              <button
+                key={p.value}
+                onClick={() => setPeriod(p.value)}
+                disabled={isPending}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  period === p.value
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1" />
+          {lastRefreshed && (
+            <span className="text-[10px] text-muted-foreground hidden md:inline">
+              Updated {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
           <Button
-            key={p.value}
-            variant={period === p.value ? 'default' : 'outline'}
+            variant="ghost"
             size="sm"
-            onClick={() => setPeriod(p.value)}
+            onClick={loadData}
+            disabled={isPending}
+            className="gap-2"
+            aria-label="Refresh analytics"
           >
-            {p.label}
+            <RefreshCcw className={`w-4 h-4 ${isPending ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Refresh</span>
           </Button>
-        ))}
-        <div className="flex-1" />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleExportCsv}
-          disabled={!data}
-          className="gap-2"
-        >
-          <Download className="w-4 h-4" />
-          Export CSV
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCsv}
+            disabled={!data}
+            className="gap-2"
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Export</span>
+          </Button>
+        </div>
       </div>
+
+      {/* Initial-load skeletons */}
+      {!data && isPending && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-32 rounded-xl bg-muted/30 animate-pulse" />
+            ))}
+          </div>
+          <div className="h-72 rounded-xl bg-muted/30 animate-pulse" />
+        </div>
+      )}
 
       {data && (
         <>
-          {/* KPI Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                    <DollarSign className="w-5 h-5 text-emerald-500" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Gross Sales</p>
-                    <p className="text-xl font-bold">
-                      {formatCurrency(data.grossSales)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                    <ShoppingCart className="w-5 h-5 text-blue-500" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Orders</p>
-                    <p className="text-xl font-bold">{data.orderCount}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
-                    <TrendingUp className="w-5 h-5 text-purple-500" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Avg Ticket</p>
-                    <p className="text-xl font-bold">
-                      {formatCurrency(data.averageTicket)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                    <Tag className="w-5 h-5 text-amber-500" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Discounts Given</p>
-                    <p className="text-xl font-bold">
-                      {formatCurrency(data.totalDiscount)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-                    <DollarSign className="w-5 h-5 text-indigo-500" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Tax Collected</p>
-                    <p className="text-xl font-bold">
-                      {formatCurrency(data.totalTax)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center">
-                    <Trash2 className="w-5 h-5 text-red-500" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Voided Items</p>
-                    <p className="text-xl font-bold">
-                      {data.voidedItemCount}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center">
-                    <DollarSign className="w-5 h-5 text-red-500" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Void Value</p>
-                    <p className="text-xl font-bold">
-                      {formatCurrency(data.voidedItemValue)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>          </div>
-
-          {/* Charts Row 1: Revenue & Order Types */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <RevenueChart data={data.salesTrend} />
-            <OrderTypeChart data={data.orderTypeBreakdown} />
+          {/* ─── 2. HERO STRIP — 3 most important KPIs ─────── */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <KpiCard
+              hero
+              label="Net Revenue"
+              value={formatCurrency(data.netRevenue)}
+              icon={Wallet}
+              accent="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              delta={data.deltas.netRevenue}
+              sublabel={`Gross ${formatCurrency(data.grossSales)} · after refunds & voids`}
+              sparkline={data.sparklines.revenue}
+            />
+            <KpiCard
+              hero
+              label="Orders"
+              value={data.orderCount.toString()}
+              icon={ShoppingCart}
+              accent="bg-violet-500/10 text-violet-600 dark:text-violet-400"
+              delta={data.deltas.orderCount}
+              sublabel={`${data.itemsPerOrder.toFixed(1)} items per order`}
+              sparkline={data.sparklines.orders}
+            />
+            <KpiCard
+              hero
+              label="Average Ticket"
+              value={formatCurrency(data.averageTicket)}
+              icon={TrendingUp}
+              accent="bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              delta={data.deltas.averageTicket}
+              sparkline={data.sparklines.avgTicket}
+            />
           </div>
 
-          {/* Charts Row 2: Category Sales & Top Items */}
+          {/* ─── 3. INSIGHTS GRID ──────────────────────────── */}
+          <InsightsPanel insights={data.insights} />
+
+          {/* ─── 4. REVENUE CHART (2/3) + INVENTORY (1/3) ── */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <CategorySalesChart data={data.categorySales} />
-            
-            {/* Top Items Table */}
-            <Card className="col-span-1">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Top Selling Items</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 max-h-[300px] overflow-y-auto">
-                {data.topItems.map((item, i) => (
-                  <div
-                    key={item.name}
-                    className="flex items-center justify-between py-2 border-b last:border-0"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Badge variant="secondary" className="w-6 h-6 flex items-center justify-center p-0 text-[10px]">
-                        {i + 1}
-                      </Badge>
-                      <span className="text-sm font-medium truncate max-w-[120px]" title={item.name}>{item.name}</span>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold">
-                        {formatCurrency(item.revenue)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.count} sold
-                      </p>
-                    </div>
-                  </div>
-                ))}
-                {data.topItems.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No sales data
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+            <div className="lg:col-span-2">
+              <RevenueChart data={data.salesTrend} />
+            </div>
+            <div className="lg:col-span-1">
+              <InventoryAlerts items={data.lowStockItems} />
+            </div>
           </div>
 
-          {/* Payment Breakdown */}
+          {/* ─── 5. HEATMAP (full width — visual centerpiece) ─ */}
+          <Heatmap data={data.heatmap} />
+
+          {/* ─── 6. PEOPLE ROW (Staff + Customers, 2 cols) ── */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <StaffLeaderboard data={data.staffLeaderboard} />
+            <CustomerInsights data={data.customers} />
+          </div>
+
+          {/* ─── 7. MENU PERFORMANCE (full width tabbed) ──── */}
+          <MenuPerformance
+            topItems={data.topItems}
+            slowItems={data.slowItems}
+            categories={data.categorySales}
+          />
+
+          {/* ─── 8. SECONDARY HEALTH STRIP (compact) ──────── */}
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">
+              Health & Operations
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <KpiCard
+                label="Tax Collected"
+                value={formatCurrency(data.totalTax)}
+                icon={Receipt}
+                accent="bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"
+              />
+              <KpiCard
+                label="Discounts"
+                value={formatCurrency(data.totalDiscount)}
+                icon={Tag}
+                accent="bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                sublabel={`${data.discountRate.toFixed(1)}% of base`}
+              />
+              <KpiCard
+                label="Items / Order"
+                value={data.itemsPerOrder.toFixed(1)}
+                icon={Package2}
+                accent="bg-sky-500/10 text-sky-600 dark:text-sky-400"
+              />
+              <KpiCard
+                label="Avg Fulfillment"
+                value={data.operations.avgFulfillmentMin !== null
+                  ? `${data.operations.avgFulfillmentMin.toFixed(1)}m`
+                  : '—'}
+                icon={Timer}
+                accent="bg-cyan-500/10 text-cyan-600 dark:text-cyan-400"
+                sublabel="order → served"
+              />
+              <KpiCard
+                label="Void Rate"
+                value={`${data.voidRate.toFixed(1)}%`}
+                icon={Trash2}
+                accent="bg-red-500/10 text-red-600 dark:text-red-400"
+                sublabel={`${data.voidedItemCount} items`}
+                invertDelta
+              />
+              <KpiCard
+                label="Refund Rate"
+                value={`${data.refundRate.toFixed(1)}%`}
+                icon={RotateCcw}
+                accent="bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                sublabel={formatCurrency(data.totalRefunds)}
+                invertDelta
+              />
+            </div>
+          </div>
+
+          {/* ─── 9. BREAKDOWNS (Order Types + Payment Mix) ─── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <OrderTypeChart data={data.orderTypeBreakdown} />
+
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Payment Methods</CardTitle>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-violet-500" />
+                  Payment Mix
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                  <div className="flex items-center gap-2">
-                    <Banknote className="w-5 h-5 text-emerald-500" />
-                    <span>Cash</span>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      {formatCurrency(data.paymentBreakdown.cash.total)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {data.paymentBreakdown.cash.count} orders
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="w-5 h-5 text-blue-500" />
-                    <span>Card (External)</span>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      {formatCurrency(data.paymentBreakdown.card.total)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {data.paymentBreakdown.card.count} orders
-                    </p>
-                  </div>
-                </div>
+                {(() => {
+                  const total = data.paymentBreakdown.cash.total + data.paymentBreakdown.card.total;
+                  const cashPct = total > 0 ? (data.paymentBreakdown.cash.total / total) * 100 : 0;
+                  const cardPct = total > 0 ? (data.paymentBreakdown.card.total / total) * 100 : 0;
+                  return (
+                    <>
+                      <div className="flex h-3 rounded-full overflow-hidden bg-muted">
+                        <div
+                          className="bg-emerald-500 transition-all"
+                          style={{ width: `${cashPct}%` }}
+                          title={`Cash: ${cashPct.toFixed(1)}%`}
+                        />
+                        <div
+                          className="bg-blue-500 transition-all"
+                          style={{ width: `${cardPct}%` }}
+                          title={`Card: ${cardPct.toFixed(1)}%`}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Banknote className="w-4 h-4 text-emerald-500" />
+                            <span className="text-xs font-medium">Cash</span>
+                          </div>
+                          <p className="text-lg font-bold tabular-nums">
+                            {formatCurrency(data.paymentBreakdown.cash.total)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {data.paymentBreakdown.cash.count} orders · {cashPct.toFixed(0)}%
+                          </p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+                          <div className="flex items-center gap-2 mb-1">
+                            <CreditCard className="w-4 h-4 text-blue-500" />
+                            <span className="text-xs font-medium">Card</span>
+                          </div>
+                          <p className="text-lg font-bold tabular-nums">
+                            {formatCurrency(data.paymentBreakdown.card.total)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {data.paymentBreakdown.card.count} orders · {cardPct.toFixed(0)}%
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
           </div>
         </>
-      )}
-
-      {isPending && (
-        <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-          <p>Loading analytics...</p>
-        </div>
       )}
     </div>
   );

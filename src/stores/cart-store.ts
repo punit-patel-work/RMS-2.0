@@ -1,6 +1,8 @@
 'use client';
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { useEffect as useEffectImport, useState as useStateImport } from 'react';
 import type { CartItem } from '@/types';
 import { calculateCart, type CartMenuItem } from '@/lib/cart-calculations';
 import type { MenuItem, Promotion, Category, PromotionRule } from '@/generated/prisma/client';
@@ -107,7 +109,13 @@ function recalc(items: CartItem[], promotions: ExtendedPromotion[]) {
     };
 }
 
-export const useCartStore = create<CartStore>((set) => ({
+// Wrap the store in Zustand's persist middleware so an in-progress cart
+// survives a route change (e.g. cashier navigates from POS → KDS to check
+// something, then comes back). We key on tableId via partialize so each
+// table's cart is preserved separately and don't bleed between sessions.
+export const useCartStore = create<CartStore>()(
+  persist(
+    (set) => ({
     tableId: null,
     tableName: null,
     promotions: [],
@@ -220,4 +228,50 @@ export const useCartStore = create<CartStore>((set) => ({
             total: 0,
             lastError: null,
         }),
-}));
+    }),
+    {
+      name: 'rms2-cart',
+      // Server-safe storage: localStorage doesn't exist during SSR. Returning
+      // a no-op storage on the server prevents crashes; the client-side
+      // store will rehydrate from real localStorage on mount.
+      storage: createJSONStorage(() => {
+        if (typeof window === 'undefined') {
+          return {
+            getItem: () => null,
+            setItem: () => {},
+            removeItem: () => {},
+          };
+        }
+        return localStorage;
+      }),
+      // Only persist the data we'd want restored. Promotions are re-injected
+      // by the page on mount via setPromotions(); persisting them would
+      // freeze stale promo data across sessions.
+      partialize: (state) => ({
+        tableId: state.tableId,
+        tableName: state.tableName,
+        items: state.items,
+      }),
+      // skipHydration: we hydrate manually via the useHydratedCart hook so
+      // components can wait for hydration to complete before deciding
+      // whether to reset on mount. Otherwise the page-mount useEffect fires
+      // before persist has loaded localStorage and incorrectly wipes the cart.
+      skipHydration: true,
+    }
+  )
+);
+
+/**
+ * React hook that triggers cart hydration from localStorage on mount and
+ * tells the caller when it's done. Pages that initialize the cart should
+ * wait for this before deciding whether to reset.
+ */
+export function useCartHydrated(): boolean {
+  const [hydrated, setHydrated] = useStateImport(false);
+  useEffectImport(() => {
+    // rehydrate is exposed by the persist middleware; call once on mount.
+    void useCartStore.persist.rehydrate();
+    setHydrated(true);
+  }, []);
+  return hydrated;
+}

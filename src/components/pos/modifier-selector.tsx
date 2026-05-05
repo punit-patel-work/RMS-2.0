@@ -74,8 +74,21 @@ export function ModifierSelector({ item, modifierGroups, onCancel, onConfirm }: 
 
   const currentTotal = item.basePrice + getSelectedModifierObjects().reduce((sum, m) => sum + m.priceAdjustment, 0);
 
+  // U-H1: don't lose in-progress selections to a misclick on the backdrop.
+  // Confirm before auto-cancelling once the user has picked at least one
+  // modifier; opening the dialog is fine, closing-with-data needs a prompt.
+  const hasSelections = Object.values(selections).some((ids) => ids.length > 0);
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      if (hasSelections && !window.confirm('Discard your modifier selections?')) {
+        return;
+      }
+      onCancel();
+    }
+  };
+
   return (
-    <Dialog open={!!item} onOpenChange={(open) => !open && onCancel()}>
+    <Dialog open={!!item} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-md max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Customize {item.name}</DialogTitle>

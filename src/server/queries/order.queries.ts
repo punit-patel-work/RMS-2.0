@@ -1,6 +1,7 @@
 'use server';
 
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@/generated/prisma/client';
 
 interface OrderFilters {
     startDate: Date;
@@ -8,24 +9,33 @@ interface OrderFilters {
     status?: string;
     orderType?: string;
     search?: string;
+    /** P-C2: optional pagination — defaults still cap at MAX_TAKE for safety. */
+    take?: number;
+    skip?: number;
 }
 
+// P-C2: previous default of 200 was load-bearing for "show me everything"
+// pages but routinely fetched a few thousand line items + modifiers per
+// page render. Cut the default in half; callers that genuinely want more
+// can pass `take` explicitly.
+const DEFAULT_TAKE = 100;
+const MAX_TAKE = 200;
+
 export async function getOrders(filters: OrderFilters) {
-    const where: any = {
+    const where: Prisma.OrderWhereInput = {
         createdAt: { gte: filters.startDate, lte: filters.endDate },
     };
 
     if (filters.status && filters.status !== 'ALL') {
-        where.status = filters.status;
+        where.status = filters.status as Prisma.OrderWhereInput['status'];
     }
 
     if (filters.orderType && filters.orderType !== 'ALL') {
-        where.orderType = filters.orderType;
+        where.orderType = filters.orderType as Prisma.OrderWhereInput['orderType'];
     }
 
     if (filters.search) {
         const search = filters.search.trim();
-        // Search by order number, table name, or customer name
         const numSearch = parseInt(search, 10);
         where.OR = [
             ...(isNaN(numSearch) ? [] : [{ orderNumber: numSearch }]),
@@ -33,6 +43,9 @@ export async function getOrders(filters: OrderFilters) {
             { table: { name: { contains: search, mode: 'insensitive' } } },
         ];
     }
+
+    const take = Math.min(MAX_TAKE, Math.max(1, filters.take ?? DEFAULT_TAKE));
+    const skip = Math.max(0, filters.skip ?? 0);
 
     const orders = await prisma.order.findMany({
         where,
@@ -49,7 +62,8 @@ export async function getOrders(filters: OrderFilters) {
             },
         },
         orderBy: { createdAt: 'desc' },
-        take: 200,
+        take,
+        skip,
     });
 
     // Convert Decimal fields to plain numbers for Client Component serialization

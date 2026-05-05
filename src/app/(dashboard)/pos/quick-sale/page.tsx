@@ -1,6 +1,7 @@
 import { getAllCategories } from '@/server/queries/menu.queries';
 import { getActivePromotions } from '@/server/queries/promotion.queries';
 import { QuickSaleBuilder } from '@/components/pos/quick-sale-builder';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,8 +17,8 @@ export default async function QuickSalePage() {
 
   return (
     <QuickSaleBuilder
-      categories={JSON.parse(JSON.stringify(categories))}
-      promotions={JSON.parse(JSON.stringify(promotions))}
+      categories={toPlain(categories)}
+      promotions={toPlain(promotions)}
     />
   );
 }

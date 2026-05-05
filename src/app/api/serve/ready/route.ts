@@ -8,17 +8,20 @@ export async function GET() {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     try {
-        // Orders with READY items OR LATER_PAY orders still OPEN (for payment collection)
+        // Two reasons an order belongs on the serve board:
+        //   (a) It still has READY items waiting for floor staff to deliver.
+        //   (b) It's a LATER_PAY ticket that hasn't been collected yet — i.e.
+        //       still OPEN. Once the takeout customer pays, the order flips to
+        //       PAID and we MUST stop showing the "Collect Payment" button,
+        //       otherwise staff repeatedly tries to charge a fully-paid ticket.
         const orders = await prisma.order.findMany({
             where: {
                 status: { in: ['OPEN', 'PAID'] },
+                orderType: { not: 'QUICK_SALE' },
                 OR: [
                     { items: { some: { status: 'READY' } } },
-                    { paymentMethod: 'LATER_PAY' },
+                    { AND: [{ status: 'OPEN' }, { paymentMethod: 'LATER_PAY' }] },
                 ],
-                orderType: {
-                    not: 'QUICK_SALE',
-                },
             },
             include: {
                 table: true,

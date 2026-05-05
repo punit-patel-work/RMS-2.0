@@ -121,12 +121,17 @@ export async function clockOut(employeeId: string, pinCode: string) {
             return { success: false, error: 'No active shift found. You are not clocked in.' };
         }
 
+        // F-M9: capture clockOut once and use that exact value for both the
+        // DB write and the duration calc. Calling new Date() twice would let
+        // a stray ms drift into the displayed shift length and, worse, make
+        // the user-facing summary disagree with what's actually persisted.
+        const clockOutAt = new Date();
         await prisma.attendanceRecord.update({
             where: { id: openRecord.id },
-            data: { clockOut: new Date() },
+            data: { clockOut: clockOutAt },
         });
 
-        const durationMinutes = Math.round((new Date().getTime() - openRecord.clockIn.getTime()) / 60000);
+        const durationMinutes = Math.round((clockOutAt.getTime() - openRecord.clockIn.getTime()) / 60000);
         const hours = Math.floor(durationMinutes / 60);
         const mins = durationMinutes % 60;
 
@@ -178,8 +183,18 @@ export async function getStaffDashboard(employeeId: string, pinCode: string) {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
+        // F-M8: read week-start from settings (US default Sunday=0, ISO=Monday=1).
+        // Falls back to Sunday if unset/invalid for backwards-compat.
+        const weekStartSetting = await prisma.siteSettings.findUnique({
+            where: { key: 'WEEK_START_DAY' },
+        });
+        const startDay = (() => {
+            const v = parseInt(weekStartSetting?.value ?? '0', 10);
+            return Number.isFinite(v) && v >= 0 && v <= 6 ? v : 0;
+        })();
         const weekStart = new Date();
-        weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // Sunday
+        const offset = (weekStart.getDay() - startDay + 7) % 7;
+        weekStart.setDate(weekStart.getDate() - offset);
         weekStart.setHours(0, 0, 0, 0);
 
         const records = await prisma.attendanceRecord.findMany({

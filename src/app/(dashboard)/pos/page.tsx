@@ -1,6 +1,8 @@
 import { getAllTables } from '@/server/queries/table.queries';
 import { TableGrid } from '@/components/pos/table-grid';
 import Link from 'next/link';
+import { Zap, Package } from 'lucide-react';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,20 +38,23 @@ export default async function POSPage() {
               <span className="text-muted-foreground">Reservation</span>
             </div>
           </div>
-          <Link href="/pos/quick-sale">
-            <button className="flex items-center gap-2 px-4 md:px-5 py-2 md:py-2.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors shadow-sm text-sm md:text-base">
-              ⚡ Quick Sale
+          {/* U-H4: was bg-blue-600 / bg-purple-600 hard-coded — broke dark
+              mode contrast. Now uses theme-driven primary/secondary tokens
+              that respect both light & dark. */}
+          <Link href="/pos/quick-sale" aria-label="Start a Quick Sale order">
+            <button className="flex items-center gap-2 px-4 md:px-5 py-2 md:py-2.5 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors shadow-sm text-sm md:text-base">
+              <Zap className="w-4 h-4" aria-hidden="true" /> Quick Sale
             </button>
           </Link>
-          <Link href="/pos/takeout">
-            <button className="flex items-center gap-2 px-4 md:px-5 py-2 md:py-2.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors shadow-sm text-sm md:text-base">
-              📦 New Takeout
+          <Link href="/pos/takeout" aria-label="Start a new Takeout order">
+            <button className="flex items-center gap-2 px-4 md:px-5 py-2 md:py-2.5 rounded-lg bg-secondary text-secondary-foreground border border-border font-semibold hover:bg-secondary/80 transition-colors shadow-sm text-sm md:text-base">
+              <Package className="w-4 h-4" aria-hidden="true" /> New Takeout
             </button>
           </Link>
         </div>
       </div>
 
-      <TableGrid tables={JSON.parse(JSON.stringify(tables))} />
+      <TableGrid tables={toPlain(tables)} />
     </div>
   );
 }

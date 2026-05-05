@@ -1,6 +1,7 @@
 import { getMenuByCategory } from '@/server/queries/menu.queries';
 import { getActivePromotions } from '@/server/queries/promotion.queries';
 import { TakeoutBuilder } from '@/components/pos/takeout-builder';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,8 +13,8 @@ export default async function TakeoutPage() {
 
   return (
     <TakeoutBuilder
-      categories={JSON.parse(JSON.stringify(categories))}
-      promotions={JSON.parse(JSON.stringify(promotions))}
+      categories={toPlain(categories)}
+      promotions={toPlain(promotions)}
     />
   );
 }

@@ -1,5 +1,6 @@
 import { getAllMenuItems, getAllCategories, getAllStations } from '@/server/queries/menu.queries';
 import { MenuManager } from '@/components/admin/menu-manager';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,9 +20,9 @@ export default async function MenuPage() {
         </p>
       </div>
       <MenuManager
-        items={JSON.parse(JSON.stringify(items))}
-        categories={JSON.parse(JSON.stringify(categories))}
-        stations={JSON.parse(JSON.stringify(stations))}
+        items={toPlain(items)}
+        categories={toPlain(categories)}
+        stations={toPlain(stations)}
       />
     </div>
   );

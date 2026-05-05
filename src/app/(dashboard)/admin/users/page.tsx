@@ -1,5 +1,6 @@
 import { getAllUsers } from '@/server/queries/user.queries';
 import { UserManager } from '@/components/admin/user-manager';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +15,7 @@ export default async function UsersPage() {
           Manage staff accounts, roles, and access
         </p>
       </div>
-      <UserManager users={JSON.parse(JSON.stringify(users))} />
+      <UserManager users={toPlain(users)} />
     </div>
   );
 }

@@ -35,7 +35,7 @@ import {
   UserPlus,
   Gift,
 } from "lucide-react";
-import { useCartStore } from "@/stores/cart-store";
+import { useCartStore, useCartHydrated } from "@/stores/cart-store";
 import { fireOrder, recordPayment } from "@/server/actions/order.actions";
 import { verifyCustomer, registerCustomer } from "@/server/actions/crm.actions";
 import { formatCurrency } from "@/lib/pricing";
@@ -79,12 +79,18 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
   const [modifyingItem, setModifyingItem] = useState<any | null>(null);
   const cart = useCartStore();
 
-  // Set promotions on mount and reset cart
+  const hydrated = useCartHydrated();
+  // Wait for persist hydration so we don't blow away saved items by mistake.
   useEffect(() => {
-    cart.reset();
+    if (!hydrated) return;
+    const currentCartTable = useCartStore.getState().tableId;
+    if (currentCartTable !== 'takeout') {
+      cart.reset();
+      cart.setTable('takeout', 'Takeout');
+    }
     cart.setPromotions(promotions as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [promotions]);
+  }, [hydrated, promotions]);
 
   const handleSearchCustomer = async () => {
     if (!customerPhone.trim() || customerPhone.length < 5) return;
@@ -148,7 +154,7 @@ export function TakeoutBuilder({ categories, promotions }: Props) {
     startTransition(async () => {
       const result = await fireOrder({
         orderType: "TAKEOUT",
-        userId: (session?.user as any)?.id ?? "",
+        userId: session?.user?.id ?? "",
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim(),
         customerId: customerData?.id,

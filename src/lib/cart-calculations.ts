@@ -47,10 +47,16 @@ export interface CartMenuItem {
  * 1. Appies COMBO promotions first (greedy approach: highest value combos first).
  * 2. Applies SIMPLE promotions (Fixed/Percent) to remaining items.
  */
+// P-M4: tax rate is now a parameter rather than a hard-coded 0.07. Callers
+// that have access to SiteSettings should pass the configured rate; the
+// default keeps existing call sites working unchanged.
+export const DEFAULT_TAX_RATE = 0.07;
+
 export function calculateCart(
     cartItems: CartItemInput[],
     menuItems: CartMenuItem[],
-    activePromotions: ExtendedPromotion[]
+    activePromotions: ExtendedPromotion[],
+    taxRate: number = DEFAULT_TAX_RATE
 ): CalculationResult {
     // 1. Expand cart into individual units for easier processing
     // e.g. { id: 'burger', qty: 2 } -> [unit1, unit2]
@@ -156,9 +162,13 @@ export function calculateCart(
                         });
                     }
 
-                    // Reward items share the combo.value
+                    // Reward items share the combo.value.
+                    // F-M4: clamp combo.value to the reward subtotal so a misconfigured
+                    // promo (e.g. value $20 on $5 of reward items) can't produce a
+                    // ratio > 1 and inflate per-item prices above base.
                     const rewardBaseTotal = rewardUnits.reduce((sum, u) => sum + u.basePrice, 0);
-                    const ratio = rewardBaseTotal > 0 ? combo.value / rewardBaseTotal : 0;
+                    const effectiveValue = Math.min(combo.value, rewardBaseTotal);
+                    const ratio = rewardBaseTotal > 0 ? effectiveValue / rewardBaseTotal : 0;
 
                     for (const unit of rewardUnits) {
                         const frozenPrice = unit.basePrice * ratio;
@@ -176,7 +186,9 @@ export function calculateCart(
                     // Bundle Strategy
                     const allUnits = [...triggerUnits, ...rewardUnits];
                     const baseTotal = allUnits.reduce((sum, u) => sum + u.basePrice, 0);
-                    const ratio = baseTotal > 0 ? combo.value / baseTotal : 0;
+                    // F-M4 clamp: combo.value can never exceed the bundle's base total.
+                    const effectiveValue = Math.min(combo.value, baseTotal);
+                    const ratio = baseTotal > 0 ? effectiveValue / baseTotal : 0;
 
                     for (const unit of allUnits) {
                         const frozenPrice = unit.basePrice * ratio;
@@ -246,7 +258,7 @@ export function calculateCart(
     const subtotal = groupedItems.reduce((acc, i) => acc + i.frozenPrice * i.quantity, 0);
     const baseTotal = groupedItems.reduce((acc, i) => acc + i.basePrice * i.quantity, 0); // Pre-discount
 
-    const tax = baseTotal * 0.07; // 7% tax on pre-discount base
+    const tax = baseTotal * taxRate; // configurable rate, default 7%
     const total = subtotal + tax;
 
     return {

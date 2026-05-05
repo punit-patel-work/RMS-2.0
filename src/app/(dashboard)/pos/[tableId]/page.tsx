@@ -3,6 +3,7 @@ import { getMenuByCategory } from '@/server/queries/menu.queries';
 import { getActivePromotions } from '@/server/queries/promotion.queries';
 import { OrderBuilder } from '@/components/pos/order-builder';
 import { notFound } from 'next/navigation';
+import { toPlain } from '@/lib/serialize';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,9 +26,9 @@ export default async function OrderPage({ params }: Props) {
 
   return (
     <OrderBuilder
-      table={JSON.parse(JSON.stringify(table))}
-      categories={JSON.parse(JSON.stringify(categories))}
-      promotions={JSON.parse(JSON.stringify(promotions))}
+      table={toPlain(table)}
+      categories={toPlain(categories)}
+      promotions={toPlain(promotions)}
     />
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import NextImage from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -146,7 +147,11 @@ export function MenuManager({
     });
   };
 
-  const handleDelete = (id: string) => {
+  // U-C2: confirm before destructive delete. Replacing the no-prompt direct
+  // call with a window.confirm minimum bar; switching to AlertDialog would be
+  // a follow-up if the marketing team wants branded styling.
+  const handleDelete = (id: string, name: string) => {
+    if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
     startTransition(async () => {
       const result = await deleteMenuItem(id);
       if (result.success) {
@@ -239,10 +244,14 @@ export function MenuManager({
           >
             {item.imageUrl && (
               <div className="relative h-32 w-full">
-                <img 
-                  src={item.imageUrl} 
+                {/* P-H4: optimized + lazy-loaded image. */}
+                <NextImage
+                  src={item.imageUrl}
                   alt={item.name}
-                  className="w-full h-full object-cover"
+                  fill
+                  sizes="(max-width: 768px) 50vw, 25vw"
+                  className="object-cover"
+                  unoptimized
                 />
               </div>
             )}
@@ -302,8 +311,9 @@ export function MenuManager({
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 text-destructive"
-                    onClick={() => handleDelete(item.id)}
+                    onClick={() => handleDelete(item.id, item.name)}
                     disabled={isPending}
+                    aria-label={`Delete ${item.name}`}
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>

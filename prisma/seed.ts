@@ -428,11 +428,19 @@ async function main() {
             const subtotal = round2(lines.reduce((s, x) => s + x.mi.basePrice * x.qty, 0));
             const tax      = round2(subtotal * 0.07);
             const total    = round2(subtotal + tax);
-            const paymentMethod = orderType === OrderType.TAKEOUT && rng() < 0.3
-                ? PaymentMethod.LATER_PAY
-                : pick(paymentMethods);
 
             const isPaidOrRefunded = finalStatus === OrderStatus.PAID || finalStatus === OrderStatus.REFUNDED;
+            // Bug fix: previously a PAID takeout order could end up with
+            // paymentMethod=LATER_PAY, which then leaked into the serve board's
+            // "Collect Payment" button forever. PAID orders must record the
+            // actual collection method (CASH/CARD); only OPEN takeouts are
+            // legitimately LATER_PAY.
+            const paymentMethod = isPaidOrRefunded
+                ? pick(paymentMethods)
+                : (orderType === OrderType.TAKEOUT && rng() < 0.3
+                    ? PaymentMethod.LATER_PAY
+                    : pick(paymentMethods));
+
             const tableId = orderType === OrderType.DINE_IN ? pick(tables).id : null;
             const customer = rng() < 0.4 ? pick(customers) : null;
 

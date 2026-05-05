@@ -7,6 +7,7 @@ export async function getAllUsers() {
         orderBy: [{ role: 'asc' }, { name: 'asc' }],
         select: {
             id: true,
+            employeeId: true,
             name: true,
             role: true,
             isActive: true,

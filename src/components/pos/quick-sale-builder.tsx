@@ -37,7 +37,7 @@ import {
   Gift,
   ShoppingBag,
 } from 'lucide-react';
-import { useCartStore } from '@/stores/cart-store';
+import { useCartStore, useCartHydrated } from '@/stores/cart-store';
 import { fireOrder } from '@/server/actions/order.actions';
 import { verifyCustomer, registerCustomer } from '@/server/actions/crm.actions';
 import { formatCurrency } from '@/lib/pricing';
@@ -80,12 +80,19 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
   const pointsToRedeem = usePoints ? maxRedeemablePoints : 0;
   const displayTotal = Math.max(0, cart.total - (pointsToRedeem * 0.1));
 
-  // Set promotions on mount and reset cart
+  const hydrated = useCartHydrated();
+  // Wait for persist hydration before deciding to reset, otherwise we wipe
+  // the cart we just persisted.
   useEffect(() => {
-    cart.reset();
+    if (!hydrated) return;
+    const currentCartTable = useCartStore.getState().tableId;
+    if (currentCartTable !== 'quick-sale') {
+      cart.reset();
+      cart.setTable('quick-sale', 'Quick Sale');
+    }
     cart.setPromotions(promotions as any);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [promotions]);
+  }, [hydrated, promotions]);
 
   // Menu search: cross-category when searching
   const currentItems = menuSearch.trim()
@@ -103,7 +110,7 @@ export function QuickSaleBuilder({ categories, promotions }: Props) {
     startTransition(async () => {
       const result = await fireOrder({
         orderType: 'QUICK_SALE',
-        userId: (session?.user as any)?.id ?? '',
+        userId: session?.user?.id ?? '',
         paymentMethod: paymentMethod,
         pointsToRedeem,
         items: cart.items.map((i) => ({

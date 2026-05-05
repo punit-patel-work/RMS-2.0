@@ -8,6 +8,7 @@ import { formatCurrency } from '@/lib/pricing';
 import { ModifierSelector } from '@/components/pos/modifier-selector';
 import { useCustomerCartStore } from '@/stores/customer-cart-store';
 import { Image as ImageIcon, Plus } from 'lucide-react';
+import NextImage from 'next/image';
 import { toast } from 'sonner';
 
 interface StorefrontMenuProps {
@@ -40,15 +41,35 @@ export function StorefrontMenu({ categories }: StorefrontMenuProps) {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
               {category.items.map((item: any) => (
-                <Card 
-                  key={item.id} 
-                  className="flex flex-col overflow-hidden hover:shadow-md transition-shadow cursor-pointer bg-card border-border/50"
+                <Card
+                  key={item.id}
+                  // a11y: storefront menu cards were inert clickable divs.
+                  // Make them keyboard-reachable + announce as buttons.
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Add ${item.name} to cart`}
+                  className="flex flex-col overflow-hidden hover:shadow-md transition-shadow cursor-pointer bg-card border-border/50 outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => setSelectedItem(item)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedItem(item);
+                    }
+                  }}
                 >
                   {item.imageUrl ? (
                     <div className="aspect-video w-full bg-muted relative">
-                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                       <img src={item.imageUrl} alt={item.name} className="object-cover w-full h-full" />
+                       {/* P-H4: next/image streams an optimized, properly sized
+                           variant + lazy-loads. `unoptimized` lets remote URLs
+                           render without configuring `images.remotePatterns`. */}
+                       <NextImage
+                         src={item.imageUrl}
+                         alt={item.name}
+                         fill
+                         sizes="(max-width: 768px) 100vw, 33vw"
+                         className="object-cover"
+                         unoptimized
+                       />
                     </div>
                   ) : (
                     <div className="aspect-video w-full bg-muted/30 flex items-center justify-center text-muted-foreground">

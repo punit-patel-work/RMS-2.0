@@ -230,17 +230,26 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
             {items.map((item) => {
               const isActive = pathname.startsWith(item.href);
               return (
-                <Link key={item.href} href={item.href} onClick={() => setMobileOpen(false)}>
-                  <div
-                    className={cn(
-                      'flex items-center gap-3 rounded-lg text-sm font-medium transition-colors',
-                      collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
-                      isActive
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                    )}
-                    title={collapsed ? item.label : undefined}
-                  >
+                // U-C4: Link itself is the navigation element; styling moves
+                // onto the anchor so screen readers see a real link instead
+                // of an inert <div onClick>. aria-current marks the active
+                // page so AT users know where they are.
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileOpen(false)}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={collapsed ? item.label : undefined}
+                  className={cn(
+                    'flex items-center gap-3 rounded-lg text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
+                    isActive
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                  )}
+                  title={collapsed ? item.label : undefined}
+                >
+                  <div className="flex items-center gap-3 w-full">
                     <div className="relative">
                       <item.icon className="w-5 h-5 shrink-0" />
                       {collapsed && getBadge(item.label) && (
@@ -312,6 +321,11 @@ export function Sidebar({ initialCounts }: { initialCounts?: { pending: number; 
         size="icon"
         className="fixed top-3 left-3 z-50 lg:hidden"
         onClick={() => setMobileOpen(!mobileOpen)}
+        // U-H3: screen readers must announce something for an icon-only
+        // button; aria-expanded ties the toggle to the drawer it controls.
+        aria-label={mobileOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        aria-expanded={mobileOpen}
+        aria-controls="mobile-nav-drawer"
       >
         {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </Button>
